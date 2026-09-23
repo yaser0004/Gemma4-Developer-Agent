@@ -1,0 +1,9 @@
+# Per-task budgets. The whole run must finish within 12 hours for ~120 tasks,
+# including sandbox setup, and we do not yet know whether tasks run
+# concurrently. These values assume the worst case (serial): ~1 min setup +
+# 4 min agent time per task ~= 10 hours.
+evaluation:
+  timeout_seconds: 120
+  max_tool_calls: 40
+  max_time_minutes: 4
+  max_turns: 60
