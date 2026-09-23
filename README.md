@@ -16,7 +16,9 @@ whose hidden tests pass after our patch is applied.
 | `scripts/validate_submission.py` | Replica of the documented `adk-submission` checks; `--zip` also packages. |
 | `scripts/fetch_data.sh` | Downloads competition data (the snapshot subset listed in `splits/`). |
 | `splits/` | Dev task splits. `dev_a` (fastapi) is for tuning; `dev_b` (rich/requests/httpx) is held out to mimic unseen repos. |
-| `tests/` | Unit tests for our tooling. |
+| `harness/` | Local replica of the official harness: Docker sandbox, the 9 tools, YAML-to-ADK compiler, agent runner, and Phase-2 verifier. See `docs/ARCHITECTURE.md`. |
+| `docs/ARCHITECTURE.md` | Data flow, trust boundaries, and every known divergence from the official harness. |
+| `tests/` | Unit tests for our tooling (Docker tests are skipped when Docker is unavailable). |
 
 Competition data is not redistributable. Keep it outside this repository (we use
 `../RESOURCES/competition_data/`).
@@ -30,6 +32,15 @@ kaggle competitions submit gemma-4-developer-agent -f dist/submission.zip -m "<w
 ```
 
 The limit is one submission per day. Validate before every upload.
+
+Local evaluation (needs Docker, the downloaded data, and a Gemini API key):
+
+```bash
+python -m venv .venv && .venv/bin/pip install google-adk==2.9.2 pyyaml numpy pytest
+.venv/bin/python -c "from harness.sandbox import build_image; build_image()"   # once
+.venv/bin/python -m harness.verify --split splits/dev_b.txt --patches gold --results-dir <out>   # verifier self-check
+GOOGLE_API_KEY=... .venv/bin/python -m harness.run --submission submission --split splits/dev_b.txt --results-dir <out>
+```
 
 ## Key constraints (from the competition rules and HARNESS_README.md)
 

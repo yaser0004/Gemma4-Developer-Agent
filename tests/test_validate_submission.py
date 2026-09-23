@@ -56,6 +56,19 @@ def test_include_traversal_rejected(tmp_path):
     assert any("traversal" in e for e in errors)
 
 
+def test_include_parent_within_root_allowed(tmp_path):
+    files = minimal(**{"sub/a.yaml": f"name: s\nmodel: {MODEL}\ninstruction: !include ../prompts/s.md\n"})
+    files["agent.yaml"] += "sub_agents:\n  - config_path: sub/a.yaml\n"
+    assert validate(make(tmp_path, files)) == []
+
+
+def test_official_sample_submission_is_valid():
+    sample = REPO.parent / "RESOURCES" / "competition_data" / "sample_submission"
+    if not sample.is_dir():
+        pytest.skip("competition data not downloaded")
+    assert validate(sample) == []
+
+
 def test_include_absolute_rejected(tmp_path):
     files = minimal()
     files["agent.yaml"] = f"name: a\nmodel: {MODEL}\ninstruction: !include /etc/passwd\n"

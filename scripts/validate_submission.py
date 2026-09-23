@@ -59,12 +59,13 @@ def _safe_join(root: Path, base_dir: Path, rel: str) -> Path:
     """Resolve `rel` against `base_dir`, refusing anything that escapes `root`."""
     if not isinstance(rel, str) or not rel or "\x00" in rel:
         raise SubmissionError(f"invalid path {rel!r}")
-    posix = PurePosixPath(rel)
-    if posix.is_absolute() or ".." in posix.parts:
-        raise SubmissionError(f"path traversal or absolute path not allowed: {rel!r}")
+    if PurePosixPath(rel).is_absolute():
+        raise SubmissionError(f"absolute path not allowed: {rel!r}")
+    # `..` is fine while it stays inside the root: the official sample itself
+    # uses `!include ../prompts/analyzer.md` from sub_agents/.
     target = (base_dir / rel).resolve()
     if not target.is_relative_to(root.resolve()):
-        raise SubmissionError(f"path escapes submission root: {rel!r}")
+        raise SubmissionError(f"path traversal outside submission root: {rel!r}")
     return target
 
 
