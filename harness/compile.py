@@ -8,7 +8,12 @@ only against the harness tool functions passed in.
 Model backends:
   gemini  - Gemini API `gemma-4-31b-it` (bf16 weights, not the QAT build).
             It rejects thinking_config, so that field is dropped; the model
-            still thinks by default. Needs GOOGLE_API_KEY.
+            still thinks by default. Needs GOOGLE_API_KEY. The free tier caps
+            input at 16k tokens per minute, so any longer prompt is impossible.
+  openai  - Any OpenAI-compatible endpoint through LiteLlm, which is how the
+            official harness reaches its local vLLM server. Pass api_base and
+            model name; the key comes from the environment variable named by
+            api_key_env.
 
 Not yet supported locally: LoRA adapters (no local serving) and skills.
 """
@@ -16,11 +21,13 @@ Not yet supported locally: LoRA adapters (no local serving) and skills.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any, Callable
 
 from google.adk.agents import BaseAgent, LlmAgent, LoopAgent, ParallelAgent, SequentialAgent
 from google.adk.models.google_llm import Gemini
+from google.adk.models.lite_llm import LiteLlm
 from google.adk.tools.agent_tool import AgentTool
 from google.genai import types
 
@@ -36,20 +43,36 @@ GENERATION_FIELDS = {
 
 
 class SubmissionCompiler:
-    def __init__(self, submission_dir: Path, tools: dict[str, Callable[..., str]], backend: str = "gemini") -> None:
-        if backend != "gemini":
-            raise ValueError(f"unsupported backend {backend!r}")
+    def __init__(
+        self,
+        submission_dir: Path,
+        tools: dict[str, Callable[..., str]],
+        backend: str = "gemini",
+        api_base: str | None = None,
+        model_name: str | None = None,
+        api_key_env: str = "OPENAI_API_KEY",
+    ) -> None:
         self.root = submission_dir.resolve()
         self.tools = tools
-        self.model = Gemini(
-            model=GEMINI_MODEL,
-            # Free-tier quota errors are routine; the official harness also retries
-            # transient errors (ModelRetryPlugin, 5 attempts, 2s..60s backoff).
-            retry_options=types.HttpRetryOptions(
-                attempts=8, initial_delay=2.0, max_delay=60.0, exp_base=2.0, jitter=0.2,
-                http_status_codes=[429, 500, 502, 503, 504],
-            ),
-        )
+        self.backend = backend
+        if backend == "gemini":
+            self.model = Gemini(
+                model=model_name or GEMINI_MODEL,
+                # Mirrors the official ModelRetryPlugin (5 attempts, 2s..60s backoff).
+                retry_options=types.HttpRetryOptions(
+                    attempts=5, initial_delay=2.0, max_delay=60.0, exp_base=2.0, jitter=0.2,
+                    http_status_codes=[429, 500, 502, 503, 504],
+                ),
+            )
+        elif backend == "openai":
+            if not api_base or not model_name:
+                raise ValueError("openai backend needs api_base and model_name")
+            api_key = os.environ.get(api_key_env)
+            if not api_key:
+                raise ValueError(f"environment variable {api_key_env} is not set")
+            self.model = LiteLlm(model=f"openai/{model_name}", api_base=api_base, api_key=api_key, num_retries=5)
+        else:
+            raise ValueError(f"unsupported backend {backend!r}")
         self.dropped: set[str] = set()
 
     def compile(self) -> BaseAgent:
@@ -66,8 +89,12 @@ class SubmissionCompiler:
     def _generation_config(self, cfg: dict[str, Any] | None) -> types.GenerateContentConfig | None:
         if not cfg:
             return None
-        self.dropped |= set(cfg) - GENERATION_FIELDS
-        return types.GenerateContentConfig(**{k: v for k, v in cfg.items() if k in GENERATION_FIELDS})
+        allowed = GENERATION_FIELDS | ({"thinking_config"} if self.backend == "openai" else set())
+        self.dropped |= set(cfg) - allowed
+        kept = {k: v for k, v in cfg.items() if k in allowed}
+        if isinstance(kept.get("thinking_config"), dict) and kept["thinking_config"].get("thinking_level"):
+            kept["thinking_config"] = {**kept["thinking_config"], "thinking_level": kept["thinking_config"]["thinking_level"].upper()}
+        return types.GenerateContentConfig(**kept)
 
     def _tool(self, entry: Any, base_dir: Path) -> Any:
         if isinstance(entry, str):
@@ -109,8 +136,9 @@ class SubmissionCompiler:
         )
 
 
-def compile_submission(submission_dir: Path, tools: dict[str, Callable[..., str]], backend: str = "gemini") -> BaseAgent:
-    compiler = SubmissionCompiler(submission_dir, tools, backend)
+def compile_submission(submission_dir: Path, tools: dict[str, Callable[..., str]], **backend: Any) -> BaseAgent:
+    """Compile with the given backend options (see SubmissionCompiler)."""
+    compiler = SubmissionCompiler(submission_dir, tools, **backend)
     agent = compiler.compile()
     if compiler.dropped:
         log.warning("local backend ignores these submission fields: %s", sorted(compiler.dropped))

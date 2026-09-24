@@ -8,8 +8,8 @@ a "baseline" commit so `git diff HEAD` captures only later edits.
 Known divergence: the official harness streams cached per-repo site-packages
 into the container before running `setup.py --fast-path`. Those caches are not
 published, so we run setup.py's slow path, which resolves dependencies from the
-public /wheels directory instead. Extra test-only dependencies, if needed, come
-from the local image built by `build_image`.
+public /wheels directory instead, plus the package's own declared dependencies
+(setup.py/setup.cfg), also from /wheels.
 """
 
 from __future__ import annotations
@@ -140,6 +140,10 @@ class Sandbox:
             # setup.py does git exclude, the editable install, wheel-based deps,
             # and writes pytest.ini / conftest.py (before the baseline commit, as officially).
             f"python3 /sandbox/setup.py --no-fast-path {task['repo'].split('/')[-1]} >/tmp/setup.log 2>&1 || (tail -20 /tmp/setup.log; exit 1)",
+            # setup.py's slow path only reads pyproject [project] dependencies; packages that
+            # declare them in setup.py/setup.cfg (e.g. requests) need this. Officially the
+            # cached per-repo site-packages cover it.
+            "pip install -q --no-index --find-links=/wheels --no-build-isolation -e /workspace >>/tmp/setup.log 2>&1 || true",
             f"git add -A && git commit -q --allow-empty -m {commit_message}",
         ]
         for step in steps:

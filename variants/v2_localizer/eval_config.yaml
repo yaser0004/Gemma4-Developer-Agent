@@ -1,0 +1,9 @@
+# Per-task budgets. All ~120 tasks must finish within 12 hours including setup.
+# v0 (4 min/task) was fully scored in ~75 min, and the organizers' default is
+# 60 min/task with per-task limits described as optional, so tasks most likely
+# run concurrently (~8x). 20 min/task ~= 5 h at that concurrency.
+evaluation:
+  timeout_seconds: 180
+  max_tool_calls: 60
+  max_time_minutes: 20
+  max_turns: 80

@@ -227,8 +227,12 @@ async def run_agent_session(task: dict, ctx: ToolContext, agent: Any, prompt: st
             stats["stop_reason"] = "turn budget"
             break
         except Exception as exc:  # noqa: BLE001 - model/API errors end the session like agent_error does officially
-            stats["stop_reason"] = "agent error"
-            stats["error"] = f"{type(exc).__name__}: {str(exc)[:500]}"
+            text = str(exc)
+            # A provider whose per-minute input quota is below the prompt size can never
+            # serve this request; report it distinctly so it is not mistaken for agent failure.
+            provider_cap = "input_token_count" in text and "RESOURCE_EXHAUSTED" in text
+            stats["stop_reason"] = "provider context cap" if provider_cap else "agent error"
+            stats["error"] = f"{type(exc).__name__}: {text[:500]}"
             break
 
         if ctx.patch_submitted:
@@ -269,7 +273,8 @@ def run_task(task: dict, args: argparse.Namespace, budget: Budget, out_limit: in
             box.bootstrap(task, args.data_dir)
             result["setup_seconds"] = round(time.monotonic() - started, 1)
             ctx = ToolContext(sandbox=box, budget=budget, graph=graph)
-            agent = compile_submission(args.submission, ctx.create_tools())
+            agent = compile_submission(args.submission, ctx.create_tools(), backend=args.backend,
+                                       api_base=args.api_base, model_name=args.model_name, api_key_env=args.api_key_env)
             prompt = build_agent_prompt(task, budget, graph is not None, workspace_layout(box))
             stats = asyncio.run(run_agent_session(task, ctx, agent, prompt, out_limit, not args.no_enforce_context))
             patch = ctx.submitted_patch if ctx.patch_submitted else ctx.current_patch()
@@ -290,7 +295,7 @@ def run_task(task: dict, args: argparse.Namespace, budget: Budget, out_limit: in
         verdict = verify_task(task, patch, args.data_dir)
         (out / "test_outputs" / f"{iid}.log").write_text(verdict.pop("test_output", ""), encoding="utf-8")
         result["resolved"] = verdict["resolved"]
-        result["verify"] = {k: verdict.get(k) for k in ("exit_code", "apply", "error", "seconds")}
+        result["verify"] = {k: verdict.get(k) for k in ("resolved_exit", "exit_code", "tests", "apply", "error", "seconds")}
     result["total_seconds"] = round(time.monotonic() - started, 1)
     return result
 
@@ -327,6 +332,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-tool-calls", type=int)
     parser.add_argument("--max-time-minutes", type=float)
     parser.add_argument("--max-turns", type=int)
+    parser.add_argument("--backend", choices=["gemini", "openai"], default="gemini")
+    parser.add_argument("--api-base", help="OpenAI-compatible base URL (openai backend)")
+    parser.add_argument("--model-name", help="model id at the endpoint, e.g. google/gemma-4-31b-it")
+    parser.add_argument("--api-key-env", default="OPENAI_API_KEY", help="env var holding the endpoint's API key")
     parser.add_argument("--no-enforce-context", action="store_true",
                         help="do not stop sessions whose prompt + max_output_tokens exceeds 32768")
     args = parser.parse_args(argv)
@@ -344,7 +353,8 @@ def main(argv: list[str] | None = None) -> int:
     if results_file.is_file():
         done = {json.loads(l)["instance_id"] for l in results_file.read_text(encoding="utf-8").splitlines() if l.strip()}
     (args.results_dir / "run_config.json").write_text(json.dumps(
-        {"submission": str(args.submission.resolve()), "budget": vars(budget), "max_output_tokens": out_limit,
+        {"submission": str(args.submission.resolve()), "backend": args.backend, "api_base": args.api_base,
+         "model_name": args.model_name, "budget": vars(budget), "max_output_tokens": out_limit,
          "enforce_context": not args.no_enforce_context, "tasks": [t["instance_id"] for t in tasks]}, indent=2))
 
     def one(task: dict) -> dict:

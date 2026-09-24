@@ -35,7 +35,7 @@ harness/run.py: for each task
 | --- | --- |
 | `scripts/validate_submission.py` | Checks a submission against the documented `adk-submission` rules and zips it. Also catches ADK `{state}` placeholders that would raise KeyError at runtime. Run it before every upload. |
 | `harness/sandbox.py` | Builds the `swegemma-sandbox:public` image from the organizers' Dockerfile. Runs task containers (`--network none`, 4 GiB, 2 CPUs) and bootstraps them as in README 4.2. |
-| `harness/verify.py` | Phase-2 grading (README 8.2): a 4-pass patch apply, a reset of the files the test patch targets, the test patch itself, and the exact pytest command. Resolved iff exit code 0. |
+| `harness/verify.py` | Phase-2 grading (README 8.2): a 4-pass patch apply, a reset of the files the test patch targets, the test patch itself, and the exact pytest command. Grading is per test against a gold reference (see below); the official exit-code verdict is reported as `resolved_exit`. |
 | `harness/tools.py` | The 9 agent tools (README 6), with budget gating, truncation, and the 3-tier `edit_file` matcher. `CodeGraph` loads the published graphs and embeddings. |
 | `harness/compile.py` | YAML to an ADK agent tree (LlmAgent / Sequential / Parallel / Loop / AgentTool). It never imports submission code. |
 | `harness/run.py` | End-to-end runner: the README 5.2 prompt, the README 5.3 outer loop with nudges, fallback patch extraction, grading, and the README 9.2 output layout. It resumes from `task_results.jsonl`. |
@@ -62,7 +62,9 @@ harness/run.py: for each task
 | --- | --- | --- | --- |
 | Model | `gemma-4-31b-it-qat-w4a16-ct` on vLLM (gemma4 tool/reasoning parsers) | Gemini API `gemma-4-31b-it` (bf16) | Tool-call formatting, thinking behavior and latency differ. The API rejects `thinking_config`, so it is dropped. |
 | Context limit | vLLM `max_model_len=32768`. vLLM rejects any prompt longer than `max_model_len - max_tokens` (`TokenizeParams.max_input_tokens` in `vllm/renderers/params.py`, checked at vLLM main 21ee743) | Enforced by default in `run.py` (stops the session with `context overflow`) | `max_output_tokens` directly shrinks the usable history: 16384 leaves only 16k prompt tokens. `--no-enforce-context` disables the check. |
-| Test dependencies | Cached per-repo site-packages, then `setup.py --fast-path` | `setup.py` slow path from the public wheels | Must be validated per repo: gold patches resolve, empty patch fails. |
+| Test dependencies | Cached per-repo site-packages, then `setup.py --fast-path` | `setup.py` slow path from the public wheels, plus the package's declared dependencies (`pip install -e` from /wheels) | Some tests cannot pass locally (e.g. requests tests needing the `pytest-httpbin` plugin or network). Handled by per-test grading. |
+| Resolution criterion | pytest exit code 0 | Every test that passes with the gold patch must pass (SWE-bench style); references in `RESOURCES/reference_results/` | Tasks with no fail-to-pass test locally are marked `verifiable: false` and excluded from local scores. |
+| Patch text | Final newline presumably handled | `tasks.jsonl` stores patches without a final newline; we append it | None (git apply rejects such patches as corrupt otherwise). |
 | Instruction section 5 of the prompt | Unpublished wording | Paraphrase of the README summary | Small. |
 | Tool descriptions | Unpublished | Our docstrings | The model sees different tool docs than in scoring. |
 | Patch apply pass 2 (symlink-normalized) | Present | Omitted | Only matters for symlinked package directories. |

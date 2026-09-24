@@ -4,7 +4,7 @@ import subprocess
 import pytest
 
 from harness.sandbox import DEFAULT_DATA_DIR, IMAGE, load_tasks
-from harness.verify import patched_files, pytest_command, target_test_files, verify_task
+from harness.verify import judge, parse_junit, patched_files, pytest_command, target_test_files, verify_task
 
 PATCH = """\
 diff --git a/pkg/mod.py b/pkg/mod.py
@@ -51,6 +51,40 @@ def test_pytest_command_matches_official_flags():
     cmd = pytest_command(["tests/test_a.py"])
     assert cmd.startswith("PYTHONSAFEPATH=1 python3 -m pytest 'tests/test_a.py' -p no:anyio -o timeout=0")
     assert "-o python_classes='Test* *Test' -q" in cmd
+
+
+JUNIT = """<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite>
+<testcase classname="tests.test_a" name="test_ok"/>
+<testcase classname="tests.test_a" name="test_bad"><failure message="x"/></testcase>
+<testcase classname="tests.test_a" name="test_err"><error message="x"/></testcase>
+<testcase classname="tests.test_a" name="test_skip"><skipped message="x"/></testcase>
+</testsuite></testsuites>"""
+
+
+def test_parse_junit_outcomes():
+    assert parse_junit(JUNIT) == {
+        "tests.test_a::test_ok": "passed",
+        "tests.test_a::test_bad": "failed",
+        "tests.test_a::test_err": "error",
+        "tests.test_a::test_skip": "skipped",
+    }
+
+
+@pytest.mark.parametrize("bad", ["", "not xml", '<!DOCTYPE x [<!ENTITY a "aaaa">]><testsuites/>'])
+def test_parse_junit_rejects_empty_malformed_and_dtd(bad):
+    assert parse_junit(bad) == {}
+
+
+def test_judge_requires_every_gold_passing_test():
+    ref = {"gold_passed": ["t::a", "t::b"]}
+    assert judge({"t::a": "passed", "t::b": "passed", "t::env": "error"}, ref) is True
+    assert judge({"t::a": "passed", "t::b": "failed"}, ref) is False
+    assert judge({"t::a": "passed"}, ref) is False  # missing test counts as not passing
+
+
+def test_judge_without_reference_defers_to_exit_code():
+    assert judge({"t::a": "passed"}, {}) is None
+    assert judge({"t::a": "passed"}, {"gold_passed": []}) is None
 
 
 def test_unusual_test_paths_are_refused_before_any_container_starts():
