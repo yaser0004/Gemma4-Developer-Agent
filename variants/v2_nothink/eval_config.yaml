@@ -1,8 +1,8 @@
-# Per-task budgets. The scorer runs tasks SEQUENTIALLY (organizer, forum 743063) and a
-# run that reaches 12 h errors. ~120 tasks x (4.5 min agent + ~0.6 min setup) ~= 10.2 h,
-# leaving headroom for a few extra tasks and server startup.
+# Per-task budgets. The scorer runs tasks SEQUENTIALLY and a run that reaches 12 h errors.
+# v2 at 4.5 min/task took ~11.5 h wall (incl. patch validation) - too close to the cap,
+# so 4.0 min here (~1 h less). Thinking is off, so each turn is faster than in v2.
 evaluation:
   timeout_seconds: 120
   max_tool_calls: 40
-  max_time_minutes: 4.5
+  max_time_minutes: 4.0
   max_turns: 60
