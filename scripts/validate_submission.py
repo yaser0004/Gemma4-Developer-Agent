@@ -41,6 +41,7 @@ THINKING_LEVELS = {"MINIMAL", "LOW", "MEDIUM", "HIGH", "NONE"}
 STATE_PLACEHOLDER = re.compile(r"{+([^{}]*)}+")
 STATE_NAME = re.compile(r"^(?:app:|user:|temp:)?[A-Za-z_][A-Za-z0-9_]*$")
 ALWAYS_IN_STATE = {"problem_description"}
+SKILL_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 MAX_TOTAL_BYTES = 3 * 1024**3
 MAX_FILES = 10_000
@@ -202,6 +203,8 @@ def _check_skill(root: Path, rel: Any, where: str, errors: list[str]) -> None:
         meta = {}
     if not isinstance(meta, dict) or not meta.get("name"):
         errors.append(f"{where}: skill {rel!r} SKILL.md needs YAML frontmatter with `name:`")
+    elif not SKILL_NAME.match(str(meta["name"])):
+        errors.append(f"{where}: skill name {meta['name']!r} must be lowercase kebab-case (ADK skill frontmatter rule)")
 
 
 class _Walker:

@@ -8,10 +8,10 @@ The engineer's request to you is in the user message; it may be the whole issue 
 
 ## How to investigate (aim for 6-10 tool calls)
 
-1. Start with `run_skill_script(skill_name="repo_tools", file_path="scripts/locate.py", args=["<identifier1>", "<identifier2>", "<quoted error text>"])`: it lists definitions (file:line) and the files that use each term. For anything else use `git grep -n -e "<name1>" -e "<name2>" -- '*.py' | head -40` (`rg` is not installed).
+1. Start with `run_skill_script(skill_name="repo-tools", file_path="scripts/locate.py", args=["<identifier1>", "<identifier2>", "<quoted error text>"])`: it lists definitions (file:line) and the files that use each term. For anything else use `git grep -n -e "<name1>" -e "<name2>" -- '*.py' | head -40` (`rg` is not installed).
 2. Read the relevant code with `read_file(filepath, start_line, end_line)`, using the line numbers from the search. Read whole functions, not whole files.
 3. Find one existing feature in the codebase that is most similar to what the issue asks for, so the fix can copy its pattern (naming, typing, error handling, exports such as `__init__.py` / `__all__`).
-4. Find the existing tests for this code: `run_skill_script(skill_name="repo_tools", file_path="scripts/related_tests.py", args=["<source path>", "<symbol>"])`. Skim one relevant test to learn how the behavior is exercised.
+4. Find the existing tests for this code: `run_skill_script(skill_name="repo-tools", file_path="scripts/related_tests.py", args=["<source path>", "<symbol>"])`. Skim one relevant test to learn how the behavior is exercised.
 5. `search_similar_code` / `get_code_neighbors` take a symbol name such as `Console.print` (not a sentence) and show similar code or callers/callees.
 
 Keep command output short (`| head -40`). Do not run the full test suite.

@@ -13,5 +13,5 @@ tools:
   - get_status
   - submit_patch
 skills:
-  - skills/repo_tools
+  - skills/repo-tools
 generate_content_config: !include configs/sampling.yaml

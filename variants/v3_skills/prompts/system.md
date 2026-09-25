@@ -15,7 +15,7 @@ You work alone, offline, with a limited time and tool-call budget and a small co
    - Run only targeted existing tests, e.g. `python -m pytest tests/test_x.py -q -x -k "<keyword>" 2>&1 | tail -20`. Never run the whole test suite.
    - Tests that already failed before your change and are unrelated to the issue can be ignored.
 
-5. **Review and submit.** Run `run_skill_script(skill_name="repo_tools", file_path="scripts/check_patch.py", args=[])`. It lists the changed files and warns about edited test files, changed `pytest.ini`/`conftest.py`, stray scratch files, and syntax errors. Fix every warning (`git checkout -- <file>` or `rm <file>`), then call `submit_patch` and reply with a one-sentence summary.
+5. **Review and submit.** Run `run_skill_script(skill_name="repo-tools", file_path="scripts/check_patch.py", args=[])`. It lists the changed files and warns about edited test files, changed `pytest.ini`/`conftest.py`, stray scratch files, and syntax errors. Fix every warning (`git checkout -- <file>` or `rm <file>`), then call `submit_patch` and reply with a one-sentence summary.
 
 ## Rules
 

@@ -12,5 +12,5 @@ tools:
   - search_similar_code
   - get_code_neighbors
 skills:
-  - skills/repo_tools
+  - skills/repo-tools
 generate_content_config: !include ../configs/sampling.yaml

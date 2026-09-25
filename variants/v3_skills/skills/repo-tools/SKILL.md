@@ -1,11 +1,11 @@
 ---
-name: repo_tools
+name: repo-tools
 description: Fast, low-output helpers for repository navigation and patch checking. locate.py finds definitions and files for identifiers or error text; related_tests.py finds the existing tests for a source file; check_patch.py audits the diff before submit_patch.
 ---
 
-# repo_tools
+# repo-tools
 
-Run with `run_skill_script(skill_name="repo_tools", file_path="scripts/<script>", args=[...])`.
+Run with `run_skill_script(skill_name="repo-tools", file_path="scripts/<script>", args=[...])`.
 Each script prints a short report (a few dozen lines at most).
 
 - `scripts/locate.py TERM [TERM ...]`: for each identifier (e.g. `Console`, `Session.send`) or quoted

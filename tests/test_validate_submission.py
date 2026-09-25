@@ -188,3 +188,9 @@ def test_skill_paths_resolve_from_root_and_reject_parent(tmp_path):
     assert validate(make(tmp_path / "ok", files)) == []
     files["sub/a.yaml"] = f"name: t\nmodel: {MODEL}\nskills: [../skills/s]\n"
     assert any("must not contain '..'" in e for e in validate(make(tmp_path / "bad", files)))
+
+
+def test_skill_name_must_be_kebab_case(tmp_path):
+    files = minimal(**{"skills/s/SKILL.md": "---\nname: my_skill\n---\nbody\n"})
+    files["agent.yaml"] = f"name: a\nmodel: {MODEL}\nskills: [skills/s]\n"
+    assert any("kebab-case" in e for e in validate(make(tmp_path, files)))
