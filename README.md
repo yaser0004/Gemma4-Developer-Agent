@@ -28,7 +28,7 @@ Competition data is not redistributable. Keep it outside this repository (we use
 ```bash
 python -m pytest tests -q
 python scripts/validate_submission.py submission --zip dist/submission.zip
-kaggle competitions submit gemma-4-developer-agent -f dist/submission.zip -m "<what changed>"
+kaggle competitions submit gemma-4-developer-agent -f dist/submission.zip -m "<what changed>"   # the uploaded file must be named submission.zip
 ```
 
 The limit is one submission per day. Validate before every upload.
