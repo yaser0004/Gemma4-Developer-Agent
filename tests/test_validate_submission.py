@@ -62,11 +62,14 @@ def test_include_parent_within_root_allowed(tmp_path):
     assert validate(make(tmp_path, files)) == []
 
 
-def test_official_sample_submission_is_valid():
+def test_official_sample_submission_only_fails_on_thinking_level():
+    # The sample is structurally valid, but its thinking_level makes every model call
+    # fail in the scorer (reasoning_effort rejected by LiteLLM).
     sample = REPO.parent / "RESOURCES" / "competition_data" / "sample_submission"
     if not sample.is_dir():
         pytest.skip("competition data not downloaded")
-    assert validate(sample) == []
+    errors = validate(sample)
+    assert errors and all("reasoning_effort" in e for e in errors)
 
 
 def test_include_absolute_rejected(tmp_path):
@@ -122,6 +125,7 @@ def test_unknown_tool_rejected(tmp_path):
         ("max_output_tokens: 40000", "max_output_tokens"),
         ("thinking_config: {thinking_budget: 0}", "thinking_budget"),
         ("thinking_config: {thinking_level: ULTRA}", "thinking_level"),
+        ("thinking_config: {thinking_level: high}", "reasoning_effort"),
         ("top_p: 1.5", "top_p"),
         ("system_instruction: hi", "not allowed"),
     ],

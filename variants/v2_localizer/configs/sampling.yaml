@@ -1,7 +1,8 @@
 temperature: 0.2
 top_p: 0.95
 max_output_tokens: 6144
+# No thinking_level: the official compiler turns it into `reasoning_effort`, which
+# LiteLLM rejects for the openai/ model route, failing every model call.
+# include_thoughts alone enables thinking via chat_template_kwargs.enable_thinking.
 thinking_config:
-  thinking_level: low
-  thinking_budget: 1024
   include_thoughts: true

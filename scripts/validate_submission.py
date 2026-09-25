@@ -153,6 +153,12 @@ def _check_generation_config(cfg: Any, where: str, errors: list[str]) -> None:
         level = thinking.get("thinking_level")
         if level is not None and str(level).upper() not in THINKING_LEVELS:
             errors.append(f"{where}: thinking_level={level!r} not in {sorted(THINKING_LEVELS)}")
+        elif level is not None and str(level).upper() in {"LOW", "MEDIUM", "HIGH"}:
+            # Schema-valid, but adk_submission maps it to `reasoning_effort`, which LiteLLM
+            # rejects for the openai/ route (UnsupportedParamsError on every model call; seen
+            # with the official wheelhouse). Use include_thoughts instead.
+            errors.append(f"{where}: thinking_level={level!r} breaks every model call in the scorer "
+                          "(reasoning_effort is rejected); use thinking_config.include_thoughts instead")
 
 
 def _check_adapter(root: Path, name: Any, where: str, errors: list[str]) -> None:
