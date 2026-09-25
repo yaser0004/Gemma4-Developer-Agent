@@ -1,5 +1,15 @@
 # Architecture
 
+> **Update 2026-09-25:** the organizers released the official harness as the Kaggle dataset
+> `metric/gemma-4-developer-agent-wheelhouse` (swegemma 0.2.7, adk_submission 0.2.11,
+> adk_eval_core 0.1.0, google-adk 1.36.1, vLLM 0.19.1). Prefer it for agent evaluation:
+> install it in `.venv-official` (see `scripts/official_compile_check.py`), then run
+> `swegemma eval ... --models-yaml <file>` with a models.yaml that maps
+> `gemma-4-31b-it-qat-w4a16-ct` to an OpenAI-compatible endpoint (e.g. NVIDIA NIM
+> `openai/google/gemma-4-31b-it`), key in `OPENAI_API_KEY`, and `--image` set to the image
+> built from `Dockerfile.public`. The replica below remains useful for per-test grading and
+> the verifier gate, and as documentation of the harness behavior.
+
 This repository contains two things:
 
 1. **The competition entry** (`submission/`): a declarative Google ADK agent config.
@@ -69,10 +79,18 @@ harness/run.py: for each task
 | Instruction section 5 of the prompt | Unpublished wording | Paraphrase of the README summary | Small. |
 | Tool descriptions | Unpublished | Our docstrings | The model sees different tool docs than in scoring. |
 | Patch apply pass 2 (symlink-normalized) | Present | Omitted | Only matters for symlinked package directories. |
-| Skills, LoRA adapters | Supported | Not yet supported locally | Evaluate those only on the leaderboard for now. |
+| Skills, LoRA adapters | Supported (LoRA reportedly fails to start on the pinned vLLM 0.19.1) | Not supported by the replica | Use the official harness for skills; avoid adapters until the vLLM issue is resolved. |
 | Timing | vLLM on 4x L4 | About 30 s per call through the free API | Local wall time is not meaningful. Compare tool calls, LLM calls and token counts instead. |
 
 ## Facts about the evaluation found so far
+
+- **`thinking_level` breaks every model call in the scorer.** adk_submission maps it to
+  `reasoning_effort`, which LiteLLM rejects for the `openai/` route (UnsupportedParamsError).
+  Use `thinking_config.include_thoughts` only. The organizers' sample has this problem.
+- Tasks are scored sequentially; a run that reaches 12 hours errors (organizer, forum).
+- Skill names must be lowercase kebab-case; skill paths resolve from the submission root
+  and may not contain `..` (even though `!include` allows in-root `..`).
+- The uploaded file must be named `submission.zip`.
 
 - The published code graphs contain only `calls` edges, although the README mentions `DEFINED_IN` and `IMPORTS`.
 - The official compaction settings (`token_threshold=32768`, `compaction_interval=15` user turns) mean history is almost never compacted within one task. The agent must be frugal with context itself.
