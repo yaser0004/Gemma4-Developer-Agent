@@ -13,7 +13,10 @@ Model backends:
   openai  - Any OpenAI-compatible endpoint through LiteLlm, which is how the
             official harness reaches its local vLLM server. Pass api_base and
             model name; the key comes from the environment variable named by
-            api_key_env.
+            api_key_env. ADK sends tool results with role "tool_responses" for
+            any model named like gemma-4 (vLLM's Gemma 4 chat template expects
+            it, so the official harness does this too). Servers that only accept
+            standard OpenAI roles (e.g. NVIDIA NIM) need standard_tool_role=True.
 
 Not yet supported locally: LoRA adapters (no local serving) and skills.
 """
@@ -27,6 +30,7 @@ from typing import Any, Callable
 
 from google.adk.agents import BaseAgent, LlmAgent, LoopAgent, ParallelAgent, SequentialAgent
 from google.adk.models.google_llm import Gemini
+from google.adk.models import lite_llm as lite_llm_module
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.tools.agent_tool import AgentTool
 from google.genai import types
@@ -51,6 +55,7 @@ class SubmissionCompiler:
         api_base: str | None = None,
         model_name: str | None = None,
         api_key_env: str = "OPENAI_API_KEY",
+        standard_tool_role: bool = False,
     ) -> None:
         self.root = submission_dir.resolve()
         self.tools = tools
@@ -70,6 +75,10 @@ class SubmissionCompiler:
             api_key = os.environ.get(api_key_env)
             if not api_key:
                 raise ValueError(f"environment variable {api_key_env} is not set")
+            if standard_tool_role:
+                # Process-wide switch of ADK's Gemma 4 detection; only used for local
+                # runs against non-vLLM endpoints, never for the submitted config.
+                lite_llm_module._is_gemma4_model = lambda model: False
             self.model = LiteLlm(model=f"openai/{model_name}", api_base=api_base, api_key=api_key, num_retries=5)
         else:
             raise ValueError(f"unsupported backend {backend!r}")

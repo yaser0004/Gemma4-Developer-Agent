@@ -274,7 +274,8 @@ def run_task(task: dict, args: argparse.Namespace, budget: Budget, out_limit: in
             result["setup_seconds"] = round(time.monotonic() - started, 1)
             ctx = ToolContext(sandbox=box, budget=budget, graph=graph)
             agent = compile_submission(args.submission, ctx.create_tools(), backend=args.backend,
-                                       api_base=args.api_base, model_name=args.model_name, api_key_env=args.api_key_env)
+                                       api_base=args.api_base, model_name=args.model_name, api_key_env=args.api_key_env,
+                                       standard_tool_role=args.standard_tool_role)
             prompt = build_agent_prompt(task, budget, graph is not None, workspace_layout(box))
             stats = asyncio.run(run_agent_session(task, ctx, agent, prompt, out_limit, not args.no_enforce_context))
             patch = ctx.submitted_patch if ctx.patch_submitted else ctx.current_patch()
@@ -336,6 +337,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--api-base", help="OpenAI-compatible base URL (openai backend)")
     parser.add_argument("--model-name", help="model id at the endpoint, e.g. google/gemma-4-31b-it")
     parser.add_argument("--api-key-env", default="OPENAI_API_KEY", help="env var holding the endpoint's API key")
+    parser.add_argument("--standard-tool-role", action="store_true",
+                        help="send tool results with the standard 'tool' role (for non-vLLM endpoints such as NVIDIA NIM)")
     parser.add_argument("--no-enforce-context", action="store_true",
                         help="do not stop sessions whose prompt + max_output_tokens exceeds 32768")
     args = parser.parse_args(argv)
