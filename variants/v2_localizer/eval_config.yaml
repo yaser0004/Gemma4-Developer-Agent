@@ -1,9 +1,8 @@
-# Per-task budgets. All ~120 tasks must finish within 12 hours including setup.
-# v0 (4 min/task) was fully scored in ~75 min, and the organizers' default is
-# 60 min/task with per-task limits described as optional, so tasks most likely
-# run concurrently (~8x). 20 min/task ~= 5 h at that concurrency.
+# Per-task budgets. The scorer runs tasks SEQUENTIALLY (organizer, forum 743063) and a
+# run that reaches 12 h errors. ~120 tasks x (4.5 min agent + ~0.6 min setup) ~= 10.2 h,
+# leaving headroom for a few extra tasks and server startup.
 evaluation:
-  timeout_seconds: 180
-  max_tool_calls: 60
-  max_time_minutes: 20
-  max_turns: 80
+  timeout_seconds: 120
+  max_tool_calls: 40
+  max_time_minutes: 4.5
+  max_turns: 60
