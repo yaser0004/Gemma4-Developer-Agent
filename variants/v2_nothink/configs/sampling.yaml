@@ -1,0 +1,8 @@
+temperature: 0.2
+top_p: 0.95
+max_output_tokens: 6144
+# Thinking OFF: include_thoughts false -> chat_template_kwargs.enable_thinking=False.
+# (No thinking_level: it maps to reasoning_effort, which LiteLLM rejects in the scorer.)
+# The LB leader (0.12) runs with thinking off; this tests thinking on (v2) vs off.
+thinking_config:
+  include_thoughts: false
