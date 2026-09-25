@@ -43,7 +43,8 @@ harness/run.py: for each task
 ## Trust boundaries
 
 - **Agent actions are untrusted.** Model-issued commands run only inside a
-  network-less, resource-limited container. File tools reject `..` and absolute
+  resource-limited container whose network was disconnected (and verified
+  offline) at the end of bootstrap, before any agent command or test runs. File tools reject `..` and absolute
   paths outside `/workspace`. Container commands use argv lists, not a local
   shell. In-container commands are killed by coreutils `timeout -s KILL`, because
   killing the local `docker exec` client would leave the process running.
@@ -62,7 +63,7 @@ harness/run.py: for each task
 | --- | --- | --- | --- |
 | Model | `gemma-4-31b-it-qat-w4a16-ct` on vLLM (gemma4 tool/reasoning parsers) | Gemini API `gemma-4-31b-it` (bf16) | Tool-call formatting, thinking behavior and latency differ. The API rejects `thinking_config`, so it is dropped. |
 | Context limit | vLLM `max_model_len=32768`. vLLM rejects any prompt longer than `max_model_len - max_tokens` (`TokenizeParams.max_input_tokens` in `vllm/renderers/params.py`, checked at vLLM main 21ee743) | Enforced by default in `run.py` (stops the session with `context overflow`) | `max_output_tokens` directly shrinks the usable history: 16384 leaves only 16k prompt tokens. `--no-enforce-context` disables the check. |
-| Test dependencies | Cached per-repo site-packages, then `setup.py --fast-path` | `setup.py` slow path from the public wheels, plus the package's declared dependencies (`pip install -e` from /wheels) | Some tests cannot pass locally (e.g. requests tests needing the `pytest-httpbin` plugin or network). Handled by per-test grading. |
+| Test dependencies | Cached per-repo site-packages, then `setup.py --fast-path` | `setup.py --fast-path`, then the repo's declared runtime and test requirements (`requirements-*.txt`, PEP 735 dependency groups) from PyPI, limited to releases uploaded before the task date + 14 days. The container is online only during this setup, then disconnected and checked offline. | Versions may differ from the official caches. A few tests still cannot pass locally (network timeouts, pygments-version-specific output); per-test grading handles them. |
 | Resolution criterion | pytest exit code 0 | Every test that passes with the gold patch must pass (SWE-bench style); references in `RESOURCES/reference_results/` | Tasks with no fail-to-pass test locally are marked `verifiable: false` and excluded from local scores. |
 | Patch text | Final newline presumably handled | `tasks.jsonl` stores patches without a final newline; we append it | None (git apply rejects such patches as corrupt otherwise). |
 | Instruction section 5 of the prompt | Unpublished wording | Paraphrase of the README summary | Small. |

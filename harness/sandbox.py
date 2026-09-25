@@ -7,15 +7,18 @@ a "baseline" commit so `git diff HEAD` captures only later edits.
 
 Known divergence: the official harness streams cached per-repo site-packages
 into the container before running `setup.py --fast-path`. Those caches are not
-published, so we run setup.py's slow path, which resolves dependencies from the
-public /wheels directory instead, plus the package's own declared dependencies
-(setup.py/setup.cfg), also from /wheels.
+published, so after setup.py's fast path we install the repository's declared
+runtime and test requirements from PyPI, limited to releases uploaded before
+the task's date (see dependency_cutoff). The
+container is online only during this setup; bootstrap() disconnects it and
+verifies it is offline before the agent or any test runs.
 """
 
 from __future__ import annotations
 
 import json
 import shutil
+from datetime import datetime, timedelta
 import subprocess
 import tempfile
 import uuid
@@ -23,6 +26,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 IMAGE = "swegemma-sandbox:public"
+PIP_CACHE_VOLUME = "swegemma-pip-cache"
+TEST_REQUIREMENT_FILES = ("requirements-tests.txt", "requirements-test.txt", "requirements-dev.txt", "test-requirements.txt")
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATA_DIR = REPO_ROOT.parent / "RESOURCES" / "competition_data"
 
@@ -37,6 +42,13 @@ class ExecResult:
 
 def _docker(*args: str, input_bytes: bytes | None = None, timeout: float | None = None) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(["docker", *args], input=input_bytes, capture_output=True, timeout=timeout, check=False)
+
+
+def dependency_cutoff(task: dict, margin_days: int = 14) -> str:
+    """Upload-date cutoff for dependency resolution: the task's creation date plus a margin
+    (fixes usually merge within days of the PR/issue being opened)."""
+    created = datetime.fromisoformat(task["created_at"].replace("Z", "+00:00"))
+    return (created + timedelta(days=margin_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def load_tasks(data_dir: Path, ids: list[str] | None = None) -> list[dict]:
@@ -80,15 +92,24 @@ class Sandbox:
         self.name = f"swegemma-{uuid.uuid4().hex[:12]}"
 
     def __enter__(self) -> "Sandbox":
+        # Starts online so bootstrap can install dependencies; bootstrap() always
+        # disconnects the network before returning, so agent commands and tests run offline.
         res = _docker(
             "run", "-d", "--rm", "--name", self.name,
-            "--network", "none", "--memory", self.memory, "--cpus", self.cpus,
+            "--network", "bridge", "--memory", self.memory, "--cpus", self.cpus,
+            "-v", f"{PIP_CACHE_VOLUME}:/root/.cache/pip",
             "-e", "TEST_TMPDIR=/tmp", "-w", "/workspace",
             self.image, "sleep", "infinity",
         )
         if res.returncode != 0:
             raise RuntimeError(f"docker run failed: {res.stderr.decode(errors='replace')}")
         return self
+
+    def go_offline(self) -> None:
+        res = _docker("network", "disconnect", "-f", "bridge", self.name, timeout=60)
+        check = self.exec("python3 -c \"import socket; socket.create_connection(('pypi.org', 443), 3)\"", timeout=30)
+        if check.exit_code == 0:
+            raise RuntimeError(f"sandbox {self.name} still has network access: {res.stderr.decode(errors='replace')}")
 
     def __exit__(self, *exc: object) -> None:
         _docker("rm", "-f", self.name, timeout=60)
@@ -134,19 +155,34 @@ class Sandbox:
             raise FileNotFoundError(f"snapshot missing: {snapshot} (run scripts/fetch_data.sh with a split containing it)")
         self.copy_in(snapshot, "/tmp/snapshot.tgz")
         self.copy_in(data_dir / "sandbox" / "setup.py", "/tmp/sandbox_setup.py")
-        steps = [
+        cutoff = dependency_cutoff(task)
+        pip = f"pip install -q --uploaded-prior-to={cutoff}"
+        online_steps = [
             "tar --no-same-owner -xzf /tmp/snapshot.tgz -C /workspace && rm /tmp/snapshot.tgz",
             "mkdir -p /sandbox && mv /tmp/sandbox_setup.py /sandbox/setup.py",
-            # setup.py does git exclude, the editable install, wheel-based deps,
-            # and writes pytest.ini / conftest.py (before the baseline commit, as officially).
-            f"python3 /sandbox/setup.py --no-fast-path {task['repo'].split('/')[-1]} >/tmp/setup.log 2>&1 || (tail -20 /tmp/setup.log; exit 1)",
-            # setup.py's slow path only reads pyproject [project] dependencies; packages that
-            # declare them in setup.py/setup.cfg (e.g. requests) need this. Officially the
-            # cached per-repo site-packages cover it.
-            "pip install -q --no-index --find-links=/wheels --no-build-isolation -e /workspace >>/tmp/setup.log 2>&1 || true",
-            f"git add -A && git commit -q --allow-empty -m {commit_message}",
+            # Fast path, as officially run after the cached site-packages are streamed in:
+            # git exclude, editable install (no deps), .pth paths, pytest.ini / conftest.py.
+            f"python3 /sandbox/setup.py --fast-path {task['repo'].split('/')[-1]} >/tmp/setup.log 2>&1 || (tail -20 /tmp/setup.log; exit 1)",
+            # Stand-in for the unpublished per-repo caches: the repo's declared runtime and
+            # test requirements, resolved as of the task date so versions match its era
+            # (the newest starlette, for one, breaks older fastapi test clients). Falls back
+            # to an unconstrained install when an old release cannot build on Python 3.13.
+            f"({pip} -e /workspace || pip install -q -e /workspace) >>/tmp/setup.log 2>&1 || true",
+            "for f in " + " ".join(TEST_REQUIREMENT_FILES) + "; do "
+            f'[ -f "$f" ] && ({pip} -r "$f" || pip install -q -r "$f") >>/tmp/setup.log 2>&1; done; true',
+            # Newer repos keep test deps in PEP 735 [dependency-groups] instead of requirements files.
+            "for g in $(python3 -c \"import tomllib; d=tomllib.load(open('pyproject.toml','rb'));"
+            " print(' '.join(k for k in d.get('dependency-groups', {}) if 'test' in k or 'dev' in k))\" 2>/dev/null); do "
+            f'({pip} --group "$g" || pip install -q --group "$g") >>/tmp/setup.log 2>&1; done; true',
         ]
-        for step in steps:
-            res = self.exec(step, timeout=600)
-            if res.exit_code != 0:
-                raise RuntimeError(f"bootstrap step failed ({step.split()[0]}): {res.stdout[-2000:]}{res.stderr[-2000:]}")
+        try:
+            for step in online_steps:
+                self._bootstrap_step(step)
+        finally:
+            self.go_offline()
+        self._bootstrap_step(f"git add -A && git commit -q --allow-empty -m {commit_message}")
+
+    def _bootstrap_step(self, step: str) -> None:
+        res = self.exec(step, timeout=900)
+        if res.exit_code != 0:
+            raise RuntimeError(f"bootstrap step failed ({step.split()[0]}): {res.stdout[-2000:]}{res.stderr[-2000:]}")
