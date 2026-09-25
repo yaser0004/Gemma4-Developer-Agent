@@ -1,0 +1,8 @@
+# Per-task budgets. The scorer runs tasks SEQUENTIALLY (organizer, forum 743063) and a
+# run that reaches 12 h errors. ~120 tasks x (4.5 min agent + ~0.6 min setup) ~= 10.2 h,
+# leaving headroom for a few extra tasks and server startup.
+evaluation:
+  timeout_seconds: 120
+  max_tool_calls: 40
+  max_time_minutes: 4.5
+  max_turns: 60

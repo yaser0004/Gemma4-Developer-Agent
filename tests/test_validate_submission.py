@@ -179,3 +179,12 @@ def test_instruction_placeholders(tmp_path, prompt, ok):
     files["agent.yaml"] += "sub_agents:\n  - config_path: sub.yaml\n"
     errors = validate(make(tmp_path, files))
     assert (not any("placeholder" in e for e in errors)) == ok, errors
+
+
+def test_skill_paths_resolve_from_root_and_reject_parent(tmp_path):
+    skill = "---\nname: s\n---\nbody\n"
+    files = minimal(**{"skills/s/SKILL.md": skill, "sub/a.yaml": f"name: t\nmodel: {MODEL}\nskills: [skills/s]\n"})
+    files["agent.yaml"] += "sub_agents:\n  - config_path: sub/a.yaml\n"
+    assert validate(make(tmp_path / "ok", files)) == []
+    files["sub/a.yaml"] = f"name: t\nmodel: {MODEL}\nskills: [../skills/s]\n"
+    assert any("must not contain '..'" in e for e in validate(make(tmp_path / "bad", files)))

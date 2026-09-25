@@ -179,9 +179,14 @@ def _check_adapter(root: Path, name: Any, where: str, errors: list[str]) -> None
         errors.append(f"{where}: adapter {name!r} rank {rank} > max_lora_rank {MAX_LORA_RANK}")
 
 
-def _check_skill(root: Path, base_dir: Path, rel: Any, where: str, errors: list[str]) -> None:
+def _check_skill(root: Path, rel: Any, where: str, errors: list[str]) -> None:
+    # Unlike !include, skill paths resolve against the submission root and may not use `..`
+    # at all (adk_submission validate_sandboxed_path with base_dir=root).
+    if isinstance(rel, str) and ".." in PurePosixPath(rel).parts:
+        errors.append(f"{where}: skill path {rel!r} must not contain '..' (skill paths are relative to the submission root)")
+        return
     try:
-        sdir = _safe_join(root, base_dir, rel)
+        sdir = _safe_join(root, root, rel)
     except SubmissionError as exc:
         errors.append(f"{where}: skill {exc}")
         return
@@ -289,7 +294,7 @@ class _Walker:
                 else:
                     self.errors.append(f"{where}: unsupported tool entry {tool!r}")
             for skill in config.get("skills") or []:
-                _check_skill(self.root, base_dir, skill, where, self.errors)
+                _check_skill(self.root, skill, where, self.errors)
 
         for sub in config.get("sub_agents") or []:
             self.walk_ref(sub, base_dir, where, depth + 1)

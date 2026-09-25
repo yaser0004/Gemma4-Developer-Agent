@@ -6,3 +6,4 @@ dist/
 .venv/
 # ntfs-3g placeholders for deleted-but-open files
 .fuse_hidden*
+.venv-official/
