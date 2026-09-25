@@ -1,0 +1,8 @@
+# Tasks whose gold patch has no locally reproducible fail-to-pass test (see harness/verify.py).
+# Excluded from dev_a/dev_b.
+fastapi_14077
+requests_6589
+requests_6592
+requests_6629
+rich_3472
+rich_4079
