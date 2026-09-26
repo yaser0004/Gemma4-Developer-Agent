@@ -62,12 +62,18 @@ def install() -> Path:
     pick = lambda prefix: [path for name, path in wheels.items() if name.startswith(prefix)]  # noqa: E731
     # Separate steps: one combined install failed on google-adk 1.36.1 vs the wheelhouse's
     # opentelemetry-exporter-otlp pin, which aborted everything (vLLM included).
-    sh([sys.executable, "-m", "pip", "install", "-q", "--find-links", str(wheelhouse), *pick("vllm-")])
+    # vLLM plus every pinned wheel the scorer ships (transformers 5.13.1, tokenizers, compressed-tensors, ...):
+    # a newer transformers from PyPI breaks vLLM 0.19.1's Gemma 4 config handling (head_dim error).
+    # google-adk/genai and opentelemetry-exporter-otlp conflict with each other, so they go separately.
+    skip = ("google_adk-", "google_genai-", "opentelemetry_exporter_otlp-", "swegemma-", "adk_submission-", "adk_eval_core-")
+    serving = [path for name, path in wheels.items() if not name.startswith(skip)]
+    sh([sys.executable, "-m", "pip", "install", "-q", "--find-links", str(wheelhouse), *serving])
     sh([sys.executable, "-m", "pip", "install", "-q", "google-adk==1.36.1", "google-genai==2.11.0", "litellm>=1.84,<1.85"])
     sh([sys.executable, "-m", "pip", "install", "-q", "--no-deps",
         *pick("swegemma-"), *pick("adk_submission-"), *pick("adk_eval_core-")])
     sh([sys.executable, "-m", "pip", "install", "-q", "docker", "networkx", "cachetools", "python-dotenv", "rich"])
-    res = sh([sys.executable, "-c", "import vllm, swegemma, adk_submission, google.adk; print('versions', vllm.__version__, google.adk.__version__)"],
+    res = sh([sys.executable, "-c", "import vllm, transformers, swegemma, adk_submission, google.adk; "
+              "print('versions vllm', vllm.__version__, 'transformers', transformers.__version__, 'adk', google.adk.__version__)"],
              capture_output=True, text=True)
     log(res.stdout.strip() or res.stderr[-1500:])
     return wheelhouse
