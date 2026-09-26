@@ -9,7 +9,8 @@ wheelhouse dataset and the gemma-4-31b-it-qat-w4a16-ct model attached:
 3. run `swegemma eval --sandbox subprocess` (no Docker on Kaggle) for each variant,
 4. write results to /kaggle/working/results/<variant>/ for `kaggle kernels output`.
 
-Differences from the scorer: 2x T4 instead of 4x L4 (fp16, slower, less KV cache), the
+Differences from the scorer: Kaggle L4 GPUs (count logged; T4s cannot run Gemma 4 in vLLM 0.19.1
+because its Triton attention kernel needs 96 KB shared memory for head_dim 512), the
 subprocess sandbox instead of Docker, and per-task time limits scaled for T4 speed.
 """
 
@@ -94,28 +95,42 @@ def find_model() -> Path:
     return candidates[0]
 
 
+def gpu_count() -> int:
+    out = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"],
+                         capture_output=True, text=True).stdout.strip()
+    log(f"GPUs:\n{out}")
+    return max(1, len(out.splitlines()))
+
+
 def start_vllm(model_dir: Path) -> subprocess.Popen:
+    tp = gpu_count()
     for max_len in (32768, 24576, 16384):
         cmd = [sys.executable, "-m", "vllm.entrypoints.openai.api_server", "--model", str(model_dir),
                "--served-model-name", SERVED_NAME, "--host", "127.0.0.1", "--port", "8000",
-               "--tensor-parallel-size", "2", "--dtype", "half", "--max-model-len", str(max_len),
+               "--tensor-parallel-size", str(tp), "--dtype", "auto", "--max-model-len", str(max_len),
                "--gpu-memory-utilization", "0.92", "--enable-auto-tool-choice",
                "--tool-call-parser", "gemma4", "--reasoning-parser", "gemma4",
                "--limit-mm-per-prompt", json.dumps({"image": 0, "audio": 0})]
-        log(f"starting vLLM with max_model_len={max_len}")
-        out = (WORK / f"vllm_{max_len}.log").open("w")
-        proc = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT)
-        deadline = time.time() + 45 * 60
+        log(f"starting vLLM with tp={tp} max_model_len={max_len}")
+        log_path = WORK / f"vllm_{max_len}.log"
+        proc = subprocess.Popen(cmd, stdout=log_path.open("w"), stderr=subprocess.STDOUT)
+        deadline = time.time() + 30 * 60
         while time.time() < deadline and proc.poll() is None:
             try:
                 with urllib.request.urlopen("http://127.0.0.1:8000/v1/models", timeout=5) as r:
                     if r.status == 200:
-                        log(f"vLLM ready (max_model_len={max_len})")
+                        log(f"vLLM ready (tp={tp}, max_model_len={max_len})")
                         return proc
             except OSError:
                 time.sleep(15)
-        log(f"vLLM failed at max_model_len={max_len} (exit={proc.poll()}); see vllm_{max_len}.log")
+            # The API server can hang after the engine core dies; do not wait out the deadline.
+            if "Engine core initialization failed" in log_path.read_text(errors="replace"):
+                break
+        log(f"vLLM failed at max_model_len={max_len} (exit={proc.poll()}); see {log_path.name}")
         proc.kill()
+        proc.wait(timeout=60)
+        subprocess.run(["pkill", "-9", "-f", "vllm.entrypoints"], check=False)
+        time.sleep(20)  # let the GPUs release memory before retrying
     raise SystemExit("vLLM could not start")
 
 

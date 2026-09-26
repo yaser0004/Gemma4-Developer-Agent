@@ -17,7 +17,7 @@ whose hidden tests pass after our patch is applied.
 | `scripts/fetch_data.sh` | Downloads competition data (the snapshot subset listed in `splits/`). |
 | `splits/` | Dev task splits. `dev_a` (fastapi) is for tuning; `dev_b` (rich/requests/httpx) is held out to mimic unseen repos. |
 | `harness/` | Local replica of the official harness: Docker sandbox, the 9 tools, YAML-to-ADK compiler, agent runner, and Phase-2 verifier. See `docs/ARCHITECTURE.md`. |
-| `kaggle/build_eval_kernel.py` | Builds a private Kaggle GPU kernel that serves the real QAT model with vLLM and runs the official harness on chosen variants and tasks (uses Kaggle GPU quota). |
+| `kaggle/build_eval_kernel.py` | Builds a private Kaggle GPU kernel that serves the QAT model with the scorer's vLLM and runs the official harness. **Parked:** on Kaggle T4s vLLM 0.19.1 cannot run Gemma 4 attention (needs 96 KB shared memory for head_dim 512; SM75 has 64 KB), and L4 machines are not available to this account. |
 | `docs/ARCHITECTURE.md` | Data flow, trust boundaries, and every known divergence from the official harness. |
 | `tests/` | Unit tests for our tooling (Docker tests are skipped when Docker is unavailable). |
 

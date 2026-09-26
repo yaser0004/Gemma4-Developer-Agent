@@ -77,7 +77,7 @@ def main() -> int:
         "enable_gpu": True,
         "enable_tpu": False,
         "enable_internet": True,
-        "machine_shape": "NvidiaTeslaT4",
+        "machine_shape": "NvidiaTeslaT4",  # only shape available here; see the template docstring (T4 cannot run Gemma 4 attention in vLLM 0.19.1)
         "competition_sources": ["gemma-4-developer-agent"],
         "dataset_sources": [WHEELHOUSE],
         "model_sources": [MODEL_SOURCE],
