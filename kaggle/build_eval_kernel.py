@@ -49,6 +49,8 @@ def main() -> int:
                         help="per task; T4s are several times slower than the scorer's 4x L4")
     parser.add_argument("--max-tool-calls", type=int, default=40)
     parser.add_argument("--max-turns", type=int, default=60)
+    parser.add_argument("--gold-control", action="store_true",
+                        help="first verify each task's gold patch (checks the grading environment itself)")
     args = parser.parse_args()
 
     names = [v.name for v in args.variant]
@@ -64,7 +66,8 @@ def main() -> int:
                     .replace("__TASK_IDS__", json.dumps(args.task_ids))
                     .replace("__MAX_TIME_MINUTES__", repr(args.max_time_minutes))
                     .replace("__MAX_TOOL_CALLS__", str(args.max_tool_calls))
-                    .replace("__MAX_TURNS__", str(args.max_turns)))
+                    .replace("__MAX_TURNS__", str(args.max_turns))
+                    .replace("__GOLD_CONTROL__", str(bool(args.gold_control))))
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "eval_kernel.py").write_text(script, encoding="utf-8")
     (args.out / "kernel-metadata.json").write_text(json.dumps({

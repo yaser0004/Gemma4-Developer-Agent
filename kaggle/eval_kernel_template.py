@@ -7,8 +7,10 @@ shape with internet disabled:
 
 1. install every wheel from the organizers' wheelhouse with --no-deps (offline),
 2. start vLLM through adk_submission.VllmServer with the scorer's parsers,
-3. run swegemma's Evaluator (subprocess sandbox) for each variant and task,
-4. write per-variant results to /kaggle/working/results/<variant>/ and summary_all.json.
+3. optionally verify each task's gold patch through the same path (positive control: shows the
+   Kaggle grading environment can resolve the task at all),
+4. run swegemma's Evaluator (subprocess sandbox) for each variant and task,
+5. write per-variant results (patches, exit codes, test output tails) under /kaggle/working.
 
 T4 machines cannot run this: vLLM 0.19.1 forces its Triton attention backend for Gemma 4
 (head_dim 256/512), and the head_dim-512 kernel needs 96 KB of shared memory (T4: 64 KB).
@@ -34,6 +36,7 @@ TASK_IDS = __TASK_IDS__
 MAX_TIME_MINUTES = __MAX_TIME_MINUTES__
 MAX_TOOL_CALLS = __MAX_TOOL_CALLS__
 MAX_TURNS = __MAX_TURNS__
+GOLD_CONTROL = __GOLD_CONTROL__
 TIMEOUT_SECONDS = 180
 TARGET_MODEL_NAME = "gemma-4-31b-it-qat-w4a16-ct"
 WORK = Path("/kaggle/working")
@@ -137,6 +140,26 @@ def main() -> None:
     tasks = [all_tasks[i] for i in TASK_IDS if i in all_tasks]
     limits, gen_constraints = build_submission_limits()
     summary = {}
+    if GOLD_CONTROL:
+        from swegemma.deduplication import resolve_task_snapshot_paths
+        from swegemma.harness.verification import verify_task
+        gold_eval = Evaluator(EvalConfig(
+            tasks_path=DATA_DIR / "tasks.jsonl", snapshots_dir=DATA_DIR / "snapshots",
+            results_dir=WORK / "results" / "_gold", submission_dir=variants[0], models=models,
+            sandbox="subprocess", timeout_seconds=TIMEOUT_SECONDS, limits=limits,
+            generation_constraints=gen_constraints, wheels_dir=DATA_DIR / "wheels", verbose=False))
+        gold_rows = []
+        for task in tasks:
+            snap, base, patch_path = resolve_task_snapshot_paths(gold_eval.config.snapshots_dir, task.instance_id, task.repo)
+            try:
+                res = run_sync(lambda: verify_task(gold_eval.docker, gold_eval.config, task, snap, base_snapshot_path=base,
+                                                   patch_path=patch_path, agent_patch=task.patch))
+                row = {"id": task.instance_id, "resolved": bool(res.resolved), "exit": res.test_exit_code}
+            except Exception as exc:  # noqa: BLE001
+                row = {"id": task.instance_id, "resolved": False, "error": f"{type(exc).__name__}: {exc}"[:300]}
+            gold_rows.append(row)
+            log(f"gold {json.dumps(row)}")
+        summary["_gold"] = {"resolved": sum(r["resolved"] for r in gold_rows), "total": len(gold_rows), "tasks": gold_rows}
     for variant in variants:
         cfg_eval = EvalConfig(
             tasks_path=DATA_DIR / "tasks.jsonl", snapshots_dir=DATA_DIR / "snapshots",
@@ -157,8 +180,12 @@ def main() -> None:
             try:
                 r = run_sync(lambda: evaluator.evaluate_task(task=task, task_index=idx, total_tasks=len(tasks)))
                 row = {"id": task.instance_id, "resolved": bool(r.resolved), "tool_calls": r.tool_calls,
-                       "patch_chars": len(r.agent_patch or ""), "seconds": round(r.duration_seconds, 1),
-                       "error": (getattr(r, "error", None) or "")[:300]}
+                       "patch_chars": len(r.agent_patch or ""), "exit": r.test_exit_code,
+                       "seconds": round(r.duration_seconds, 1), "error": (getattr(r, "error", None) or "")[:300]}
+                out_dir = WORK / "results" / variant.name / "artifacts"
+                out_dir.mkdir(parents=True, exist_ok=True)
+                (out_dir / f"{task.instance_id}.patch").write_text(r.agent_patch or "")
+                (out_dir / f"{task.instance_id}.test.txt").write_text((getattr(r, "test_output", "") or "")[-6000:])
             except Exception as exc:  # noqa: BLE001 - keep evaluating the remaining tasks
                 row = {"id": task.instance_id, "resolved": False, "error": f"{type(exc).__name__}: {exc}"[:300],
                        "seconds": round(time.time() - t0, 1)}
