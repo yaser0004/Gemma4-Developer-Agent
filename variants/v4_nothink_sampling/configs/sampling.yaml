@@ -1,0 +1,10 @@
+# Model-card sampling for Gemma 4 ("temperature=1.0, top_p=0.95, top_k=64" for all use cases);
+# the only change vs v2_nothink (which used temperature 0.2 from the organizers' sample).
+temperature: 1.0
+top_p: 0.95
+top_k: 64
+max_output_tokens: 6144
+# Thinking OFF (include_thoughts false -> enable_thinking False); never set thinking_level,
+# it maps to reasoning_effort which LiteLLM rejects in the scorer.
+thinking_config:
+  include_thoughts: false
