@@ -62,12 +62,14 @@ def install() -> Path:
     pick = lambda prefix: [path for name, path in wheels.items() if name.startswith(prefix)]  # noqa: E731
     # Separate steps: one combined install failed on google-adk 1.36.1 vs the wheelhouse's
     # opentelemetry-exporter-otlp pin, which aborted everything (vLLM included).
-    # vLLM plus every pinned wheel the scorer ships (transformers 5.13.1, tokenizers, compressed-tensors, ...):
-    # a newer transformers from PyPI breaks vLLM 0.19.1's Gemma 4 config handling (head_dim error).
-    # google-adk/genai and opentelemetry-exporter-otlp conflict with each other, so they go separately.
-    skip = ("google_adk-", "google_genai-", "opentelemetry_exporter_otlp-", "swegemma-", "adk_submission-", "adk_eval_core-")
-    serving = [path for name, path in wheels.items() if not name.startswith(skip)]
-    sh([sys.executable, "-m", "pip", "install", "-q", "--find-links", str(wheelhouse), *serving])
+    # vLLM with its normal dependency resolution first, then the scorer's pinned wheels forced
+    # over it with --no-deps: a newer transformers from PyPI breaks vLLM 0.19.1 on Gemma 4
+    # (head_dim per-layer error), and the pinned set (transformers 5.13.1, compressed-tensors
+    # 0.15.0.1, xgrammar 0.2.5.post1) is not co-installable under pip's resolver.
+    sh([sys.executable, "-m", "pip", "install", "-q", "--find-links", str(wheelhouse), *pick("vllm-")])
+    pinned = [path for name, path in wheels.items()
+              if name.startswith(("transformers-", "tokenizers-", "compressed_tensors-", "safetensors-", "xgrammar-"))]
+    sh([sys.executable, "-m", "pip", "install", "-q", "--no-deps", "--force-reinstall", *pinned])
     sh([sys.executable, "-m", "pip", "install", "-q", "google-adk==1.36.1", "google-genai==2.11.0", "litellm>=1.84,<1.85"])
     sh([sys.executable, "-m", "pip", "install", "-q", "--no-deps",
         *pick("swegemma-"), *pick("adk_submission-"), *pick("adk_eval_core-")])
