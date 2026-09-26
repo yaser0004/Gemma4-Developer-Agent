@@ -58,14 +58,32 @@ def sh(cmd: list[str], **kw) -> subprocess.CompletedProcess:
 
 def install() -> Path:
     wheelhouse = find_one(["/kaggle/input/**/vllm-0.19.1-*.whl"], "organizers' wheelhouse (vllm wheel)").parent
-    wheels = sorted(str(p) for p in wheelhouse.glob("*.whl"))
-    harness = [w for w in wheels if Path(w).name.startswith(("swegemma-", "adk_submission-", "adk_eval_core-"))]
-    others = [w for w in wheels if w not in harness]
-    # Internet is on: pip resolves anything the wheelhouse does not carry (e.g. torch).
-    sh([sys.executable, "-m", "pip", "install", "-q", "--find-links", str(wheelhouse), *others])
-    sh([sys.executable, "-m", "pip", "install", "-q", "--no-deps", *harness])
+    wheels = {Path(p).name: str(p) for p in wheelhouse.glob("*.whl")}
+    pick = lambda prefix: [path for name, path in wheels.items() if name.startswith(prefix)]  # noqa: E731
+    # Separate steps: one combined install failed on google-adk 1.36.1 vs the wheelhouse's
+    # opentelemetry-exporter-otlp pin, which aborted everything (vLLM included).
+    sh([sys.executable, "-m", "pip", "install", "-q", "--find-links", str(wheelhouse), *pick("vllm-")])
+    sh([sys.executable, "-m", "pip", "install", "-q", "google-adk==1.36.1", "google-genai==2.11.0", "litellm>=1.84,<1.85"])
+    sh([sys.executable, "-m", "pip", "install", "-q", "--no-deps",
+        *pick("swegemma-"), *pick("adk_submission-"), *pick("adk_eval_core-")])
     sh([sys.executable, "-m", "pip", "install", "-q", "docker", "networkx", "cachetools", "python-dotenv", "rich"])
+    res = sh([sys.executable, "-c", "import vllm, swegemma, adk_submission, google.adk; print('versions', vllm.__version__, google.adk.__version__)"],
+             capture_output=True, text=True)
+    log(res.stdout.strip() or res.stderr[-1500:])
     return wheelhouse
+
+
+def find_model() -> Path:
+    """Directory holding the QAT checkpoint; mount paths differ between Kaggle image versions."""
+    candidates = [Path(p).parent for p in glob.glob("/kaggle/input/**/config.json", recursive=True)
+                  if "w4a16" in p.lower() and "31b" in p.lower()]
+    candidates = [c for c in candidates if any(c.glob("*.safetensors"))]
+    if not candidates:
+        tree = subprocess.run(["bash", "-c", "find /kaggle/input -maxdepth 7 | head -80"], capture_output=True, text=True).stdout
+        log("input tree:\n" + tree)
+        raise SystemExit("could not find the gemma-4-31b-it-qat-w4a16-ct checkpoint under /kaggle/input")
+    log(f"model dir: {candidates[0]}")
+    return candidates[0]
 
 
 def start_vllm(model_dir: Path) -> subprocess.Popen:
@@ -107,7 +125,7 @@ def smoke_test() -> None:
 def main() -> None:
     WORK.mkdir(parents=True, exist_ok=True)
     install()
-    model_dir = find_one(["/kaggle/input/**/gemma-4-31b-it-qat-w4a16-ct/**/config.json"], "QAT model").parent
+    model_dir = find_model()
     data_dir = find_one(["/kaggle/input/**/gemma-4-developer-agent/tasks.jsonl",
                          "/kaggle/input/**/tasks.jsonl"], "competition data").parent
     server = start_vllm(model_dir)
