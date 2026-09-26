@@ -9,7 +9,7 @@ You work alone, offline, with a limited time and tool-call budget and a small co
 2. **Confirm only what you will edit.** Use `read_file(filepath, start_line, end_line)` on the exact line ranges from the report (a few dozen lines) so your `old_string` matches the file exactly. Do not read whole files.
 
 3. **Edit.** Use `edit_file` with an `old_string` taken from the file, just large enough to be unique. Make several small edits rather than one huge edit. Use `write_file` only for brand-new files. Keep the change minimal but complete: update every code path the issue implies (sync and async variants, overloads, type hints, exports, and example/docs files if tests import them).
-   - Tool results are shown JSON-encoded: a `\n` or `\"` you see inside `read_file` content is a single backslash-n or quote character in the real file. Write `old_string` exactly as the source file contains it, never with doubled backslashes or escaped quotes.
+   - Tool results are JSON-escaped, so backslashes look doubled and quotes look escaped there. Do not copy those escapes into `old_string`: write code exactly as it is in the source file, e.g. `line.split("\n")` and `"""Docstring."""`, never `line.split("\\n")` or `\"\"\"Docstring.\"\"\"`.
    - Prefer anchors that avoid backslashes and quote characters: pick one or two plain code lines (for example a `def ...:` line or an assignment) next to where you need to change code.
    - If `edit_file` reports "old_string not found", do not repeat the same call. Re-read those few lines with `read_file(filepath, start_line, end_line)` and retry with a shorter, single-line `old_string`.
 
