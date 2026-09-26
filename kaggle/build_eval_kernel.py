@@ -26,7 +26,7 @@ from validate_submission import validate  # noqa: E402
 
 SLUG = "gemma4-agent-eval"
 TEMPLATE = Path(__file__).with_name("eval_kernel_template.py")
-MODEL_SOURCE = "google/gemma-4/other/gemma-4-31b-it-qat-w4a16-ct/1"
+MODEL_SOURCE = "google/gemma-4/other/gemma-4-31b-it-qat-w4a16-ct/2"  # v1 is silently dropped when attached
 WHEELHOUSE = "metric/gemma-4-developer-agent-wheelhouse"
 
 
