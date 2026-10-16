@@ -93,8 +93,36 @@ harness/run.py: for each task
 - The uploaded file must be named `submission.zip`.
 
 - The published code graphs contain only `calls` edges, although the README mentions `DEFINED_IN` and `IMPORTS`.
-- The official compaction settings (`token_threshold=32768`, `compaction_interval=15` user turns) mean history is almost never compacted within one task. The agent must be frugal with context itself.
+- Compaction in the scorer uses `token_threshold=14336` (HARNESS_README since 2026-09-25, Getting Started notebook). Compaction summarizes old events, so exact code strings needed later by `edit_file` can be lost; keep tool output short.
 - `hints` is only present in session state when a task has hints (no public task does). An instruction containing `{hints}` would therefore fail every task; use `{hints?}`.
+
+## Scorer stack changes (swegemma 0.2.7 -> 0.2.11, adk_submission 0.2.11 -> 0.2.13)
+
+Checked by diffing the installed wheels (`.venv-official` is 0.2.7, `.venv-official2` is 0.2.11/0.2.13):
+
+- **Thinking flags.** `thinking_budget > 0` enables thinking, `0` disables it, and `include_thoughts` only decides whether
+  thought parts stay in the history, unless neither budget nor level is set. `include_thoughts: false` alone is therefore
+  ambiguous (forum 747914); the validator rejects it. Thinking is on for the strongest public bundles; turning it off
+  halved the resolve rate in an independent 129-task ablation (forum 746250).
+- **Patch loss.** In 0.2.7 only `TimeoutError` and `LlmCallsLimitExceededError` reached the fallback `git diff`; any other
+  exception (for example a context overflow) discarded the work. 0.2.11 catches generic exceptions inside the agent loop
+  before the fallback, but a stage that raises still ends the task, so overflow remains a failure to measure.
+- **Model registry.** `swegemma.models.registry` is gone; the registry is built from the declared models
+  (`swegemma.cli._build_cli_model_registry`). `scripts/official_compile_check.py` handles both layouts.
+- **Models.** `gemma-4-12b/e4b/e2b-it-qat-w4a16-ct` are accepted next to the 31B, one model per submission. The 12B needs
+  `--hf-overrides` on the vLLM command line (the eval kernel passes it).
+- **Environment.** The Kaggle default image moved to Python 3.13, but the wheelhouse is cp312: kernels must pin the
+  organizers' image (`docker_image` in `kaggle/build_eval_kernel.py`).
+- **ADK 1.36 ParallelAgent.** Compaction can drop a branch's function call while keeping its response (adk-python #7324,
+  no 1.x backport). Parallel branches therefore must not call tools (`variants/v9_ppa`).
+
+## Local evaluation on Kaggle
+
+`kaggle/census_kernel` (CPU) verifies gold and empty patches for all public tasks with the Kaggle-side verifier and
+writes `eval_main.txt` (tasks where gold resolves and empty fails). `kaggle/build_eval_kernel.py` builds the GPU kernel
+(4x L4, vLLM, `Evaluator.run` with concurrency) that runs variants on those tasks with their own `eval_config.yaml`.
+`scripts/compare_arms.py` reads the result directories and prints resolved counts, paired wins and losses and the
+projected scorer wall time. Daily Kaggle GPU quota resets Saturdays at 00:00 UTC.
 
 ## Operating notes
 
