@@ -2,12 +2,15 @@
 
 Usage:
     python kaggle/build_eval_kernel.py --user <kaggle_username> --out dist/eval_kernel \\
-        --variant variants/v2_localizer --variant variants/v2_nothink \\
-        --task-ids requests_7205 rich_3518 ... [--max-time-minutes 15]
+        --variant variants/v6_anchor --variant variants/v7_budget \\
+        --tasks-file splits/eval_main.txt [--concurrency 3] [--time-scale 1.0]
     kaggle kernels push -p dist/eval_kernel
     kaggle kernels status <user>/gemma4-agent-eval
     kaggle kernels output <user>/gemma4-agent-eval -p <dir>
 
+All variants in one kernel must declare the same model (vLLM is started once). Each variant runs
+with its own eval_config.yaml budgets, exactly like the scorer; --time-scale multiplies
+max_time_minutes to compensate for the slowdown measured under --concurrency.
 Uses Kaggle GPU quota. The kernel is private and only talks to its own local vLLM server.
 """
 
@@ -17,17 +20,19 @@ import argparse
 import base64
 import io
 import json
+import re
 import sys
 import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from validate_submission import validate  # noqa: E402
+from validate_submission import ALLOWED_MODELS, validate  # noqa: E402
 
 SLUG = "gemma4-agent-eval"
 TEMPLATE = Path(__file__).with_name("eval_kernel_template.py")
-MODEL_SOURCE = "google/gemma-4/other/gemma-4-31b-it-qat-w4a16-ct/2"  # v1 is silently dropped when attached
+MODEL_VERSION = 2  # v1 is silently dropped when attached
 WHEELHOUSE = "metric/gemma-4-developer-agent-wheelhouse"
+MODEL_LINE = re.compile(r"^\s*model:\s*(?:openai/|hosted_vllm/|custom/|google/)?([^\s#]+)", re.M)
 
 
 def zip_variants(variants: list[Path]) -> bytes:
@@ -39,18 +44,25 @@ def zip_variants(variants: list[Path]) -> bytes:
     return buf.getvalue()
 
 
+def declared_models(variants: list[Path]) -> set[str]:
+    return {m for v in variants for y in v.rglob("*.y*ml") for m in MODEL_LINE.findall(y.read_text(encoding="utf-8"))}
+
+
+def read_task_ids(path: Path) -> list[str]:
+    return [line.strip() for line in path.read_text().splitlines() if line.strip() and not line.startswith("#")]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--user", required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--variant", type=Path, action="append", required=True)
-    parser.add_argument("--task-ids", nargs="+", required=True)
-    parser.add_argument("--max-time-minutes", type=float, default=15.0,
-                        help="per task; T4s are several times slower than the scorer's 4x L4")
-    parser.add_argument("--max-tool-calls", type=int, default=40)
-    parser.add_argument("--max-turns", type=int, default=60)
-    parser.add_argument("--gold-control", action="store_true",
-                        help="first verify each task's gold patch (checks the grading environment itself)")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--tasks-file", type=Path, help="one instance_id per line")
+    group.add_argument("--task-ids", nargs="+")
+    parser.add_argument("--concurrency", type=int, default=1)
+    parser.add_argument("--time-scale", type=float, default=1.0)
+    parser.add_argument("--slug", default=SLUG)
     args = parser.parse_args()
 
     names = [v.name for v in args.variant]
@@ -60,19 +72,26 @@ def main() -> int:
         errors = validate(variant)
         if errors:
             raise SystemExit(f"{variant} is invalid:\n  " + "\n  ".join(errors))
+    models = declared_models(args.variant)
+    if len(models) != 1 or not models <= ALLOWED_MODELS:
+        raise SystemExit(f"variants must share exactly one allowed model, got {sorted(models)}")
+    model = next(iter(models))
+    task_ids = args.task_ids or read_task_ids(args.tasks_file)
 
     script = TEMPLATE.read_text(encoding="utf-8")
-    script = (script.replace("__VARIANTS_ZIP_B64__", base64.b64encode(zip_variants(args.variant)).decode("ascii"))
-                    .replace("__TASK_IDS__", json.dumps(args.task_ids))
-                    .replace("__MAX_TIME_MINUTES__", repr(args.max_time_minutes))
-                    .replace("__MAX_TOOL_CALLS__", str(args.max_tool_calls))
-                    .replace("__MAX_TURNS__", str(args.max_turns))
-                    .replace("__GOLD_CONTROL__", str(bool(args.gold_control))))
+    for key, value in {
+        "__VARIANTS_ZIP_B64__": base64.b64encode(zip_variants(args.variant)).decode("ascii"),
+        "__TASK_IDS__": json.dumps(task_ids),
+        "__CONCURRENCY__": str(args.concurrency),
+        "__TIME_SCALE__": repr(args.time_scale),
+        "__MODEL_NAME__": model,
+    }.items():
+        script = script.replace(key, value)
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "eval_kernel.py").write_text(script, encoding="utf-8")
     (args.out / "kernel-metadata.json").write_text(json.dumps({
-        "id": f"{args.user}/{SLUG}",
-        "title": SLUG,
+        "id": f"{args.user}/{args.slug}",
+        "title": args.slug,
         "code_file": "eval_kernel.py",
         "language": "python",
         "kernel_type": "script",
@@ -83,10 +102,10 @@ def main() -> int:
         "machine_shape": "NvidiaL4",
         "competition_sources": ["gemma-4-developer-agent"],
         "dataset_sources": [WHEELHOUSE],
-        "model_sources": [MODEL_SOURCE],
+        "model_sources": [f"google/gemma-4/other/{model}/{MODEL_VERSION}"],
         "kernel_sources": [],
     }, indent=2), encoding="utf-8")
-    print(f"kernel written to {args.out}: variants={names}, {len(args.task_ids)} tasks")
+    print(f"kernel written to {args.out}: model={model} variants={names}, {len(task_ids)} tasks, concurrency={args.concurrency}")
     return 0
 
 
