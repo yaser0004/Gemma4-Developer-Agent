@@ -1,0 +1,5 @@
+name: proposer_1
+model: gemma-4-31b-it-qat-w4a16-ct
+description: Drafts one candidate fix as SEARCH/REPLACE blocks.
+instruction: !include ../prompts/proposer.md
+generate_content_config: !include ../configs/sampling_p1.yaml

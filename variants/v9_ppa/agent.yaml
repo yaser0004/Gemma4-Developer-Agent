@@ -1,0 +1,7 @@
+agent_class: SequentialAgent
+name: ppa
+description: Scout the repository, draft four independent fixes in parallel, then apply the best one and submit.
+sub_agents:
+  - config_path: sub_agents/scout.yaml
+  - config_path: sub_agents/proposers.yaml
+  - config_path: sub_agents/fixer.yaml

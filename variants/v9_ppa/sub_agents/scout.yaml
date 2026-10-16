@@ -1,0 +1,9 @@
+name: scout
+model: gemma-4-31b-it-qat-w4a16-ct
+description: Locates the code to change and writes a brief for the proposers.
+instruction: !include ../prompts/scout.md
+tools:
+  - run_command
+  - read_file
+  - get_status
+generate_content_config: !include ../configs/sampling_agent.yaml
