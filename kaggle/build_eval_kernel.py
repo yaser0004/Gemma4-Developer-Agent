@@ -32,6 +32,9 @@ SLUG = "gemma4-agent-eval"
 TEMPLATE = Path(__file__).with_name("eval_kernel_template.py")
 MODEL_VERSION = 2  # v1 is silently dropped when attached
 WHEELHOUSE = "metric/gemma-4-developer-agent-wheelhouse"
+# The wheelhouse is cp312; the default image moved to Python 3.13 (forum 749505). This is the image
+# of the organizers' Getting Started notebook.
+DOCKER_IMAGE = "gcr.io/kaggle-private-byod/python@sha256:37c64f7dd9c54116ecd1bcc88817c5469b88387388fade02bfa8bf3fc647d461"
 MODEL_LINE = re.compile(r"^\s*model:\s*(?:openai/|hosted_vllm/|custom/|google/)?([^\s#]+)", re.M)
 
 
@@ -104,6 +107,8 @@ def main() -> int:
         "dataset_sources": [WHEELHOUSE],
         "model_sources": [f"google/gemma-4/other/{model}/{MODEL_VERSION}"],
         "kernel_sources": [],
+        "docker_image": DOCKER_IMAGE,
+        "docker_image_pinning_type": "original",
     }, indent=2), encoding="utf-8")
     print(f"kernel written to {args.out}: model={model} variants={names}, {len(task_ids)} tasks, concurrency={args.concurrency}")
     return 0
