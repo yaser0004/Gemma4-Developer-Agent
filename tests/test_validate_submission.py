@@ -104,7 +104,7 @@ def test_two_models_rejected(tmp_path):
 def test_other_single_model_rejected(tmp_path):
     files = minimal()
     files["agent.yaml"] = "name: a\nmodel: gemma-4-9b-it\n"
-    assert any("only gemma-4-31b" in e for e in validate(make(tmp_path, files)))
+    assert any("are supported" in e for e in validate(make(tmp_path, files)))
 
 
 def test_agent_tool_model_checked(tmp_path):
@@ -123,7 +123,8 @@ def test_unknown_tool_rejected(tmp_path):
     "gen, needle",
     [
         ("max_output_tokens: 40000", "max_output_tokens"),
-        ("thinking_config: {thinking_budget: 0}", "thinking_budget"),
+        ("thinking_config: {thinking_budget: -1}", "thinking_budget"),
+        ("thinking_config: {include_thoughts: false}", "ambiguous"),
         ("thinking_config: {thinking_level: ULTRA}", "thinking_level"),
         ("thinking_config: {thinking_level: high}", "reasoning_effort"),
         ("top_p: 1.5", "top_p"),
@@ -194,3 +195,24 @@ def test_skill_name_must_be_kebab_case(tmp_path):
     files = minimal(**{"skills/s/SKILL.md": "---\nname: my_skill\n---\nbody\n"})
     files["agent.yaml"] = f"name: a\nmodel: {MODEL}\nskills: [skills/s]\n"
     assert any("kebab-case" in e for e in validate(make(tmp_path, files)))
+
+
+@pytest.mark.parametrize("alias", ["gemma-4-12b-it-qat-w4a16-ct", "gemma-4-e4b-it-qat-w4a16-ct", "gemma-4-e2b-it-qat-w4a16-ct"])
+def test_smaller_qat_variants_accepted(tmp_path, alias):
+    files = minimal()
+    files["agent.yaml"] = f"name: a\nmodel: {alias}\n"
+    assert validate(make(tmp_path, files)) == []
+
+
+def test_mixing_qat_variants_rejected(tmp_path):
+    files = minimal(**{"sub.yaml": "name: s\nmodel: gemma-4-12b-it-qat-w4a16-ct\n"})
+    files["agent.yaml"] = f"name: a\nmodel: {MODEL}\nsub_agents:\n  - config_path: sub.yaml\n"
+    assert any("single-model" in e for e in validate(make(tmp_path, files)))
+
+
+def test_explicit_thinking_off_and_on_accepted(tmp_path):
+    for gen in ("thinking_config: {thinking_budget: 0, include_thoughts: false}",
+                "thinking_config: {thinking_budget: 2048, include_thoughts: false}"):
+        files = minimal()
+        files["agent.yaml"] = f"name: a\nmodel: {MODEL}\ngenerate_content_config:\n  {gen}\n"
+        assert validate(make(tmp_path / str(abs(hash(gen))), files)) == []

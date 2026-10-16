@@ -23,7 +23,10 @@ from typing import Any
 
 import yaml
 
-ALLOWED_MODEL = "gemma-4-31b-it-qat-w4a16-ct"
+ALLOWED_MODELS = {
+    "gemma-4-31b-it-qat-w4a16-ct", "gemma-4-12b-it-qat-w4a16-ct",
+    "gemma-4-e4b-it-qat-w4a16-ct", "gemma-4-e2b-it-qat-w4a16-ct",
+}
 PROVIDER_PREFIXES = ("openai/", "google/", "hosted_vllm/", "custom/")
 ROOT_CONFIG_NAMES = ("agent.yaml", "agent.yml", "root_agent.yaml", "root_agent.yml")
 ALLOWED_EXTENSIONS = {".yaml", ".yml", ".md", ".txt", ".py", ".json", ".safetensors"}
@@ -150,7 +153,13 @@ def _check_generation_config(cfg: Any, where: str, errors: list[str]) -> None:
         if not isinstance(thinking, dict):
             errors.append(f"{where}: thinking_config must be a mapping")
             return
-        bounded("thinking_budget", thinking.get("thinking_budget"), 1, MAX_TOKENS)
+        bounded("thinking_budget", thinking.get("thinking_budget"), 0, MAX_TOKENS)
+        if thinking.get("include_thoughts") is False and thinking.get("thinking_budget") is None \
+                and thinking.get("thinking_level") is None:
+            # adk_submission 0.2.13 no longer treats include_thoughts:false as "thinking off" once
+            # the runner merges its default budget (forum 747914); say what you mean explicitly.
+            errors.append(f"{where}: include_thoughts: false without thinking_budget is ambiguous in the "
+                          "current scorer (thinking may stay on); set thinking_budget (0 disables, >0 enables)")
         level = thinking.get("thinking_level")
         if level is not None and str(level).upper() not in THINKING_LEVELS:
             errors.append(f"{where}: thinking_level={level!r} not in {sorted(THINKING_LEVELS)}")
@@ -332,8 +341,8 @@ def validate(submission: Path) -> list[str]:
         errors.append(f"total instruction chars {walker.instruction_chars} > {MAX_TOTAL_INSTRUCTION_CHARS}")
     if len(walker.models) > 1:
         errors.append(f"single-model rule violated: {sorted(walker.models)}")
-    elif walker.models and walker.models != {ALLOWED_MODEL}:
-        errors.append(f"only {ALLOWED_MODEL} is supported, got {sorted(walker.models)}")
+    elif walker.models and not walker.models <= ALLOWED_MODELS:
+        errors.append(f"only {sorted(ALLOWED_MODELS)} are supported, got {sorted(walker.models)}")
     return errors
 
 

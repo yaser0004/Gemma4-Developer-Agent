@@ -13,11 +13,16 @@ live in a separate virtualenv because they pin google-adk 1.x:
 Usage: .venv-official/bin/python scripts/official_compile_check.py submission [variants/... ...]
 """
 
+import os
 import sys
 from pathlib import Path
 
 from adk_submission import compile_submission
-from swegemma.models.registry import setup_gemma_model_registry
+try:
+    from swegemma.models.registry import setup_gemma_model_registry
+except ImportError:  # swegemma >= 0.2.11 builds the registry from the declared models
+    setup_gemma_model_registry = None
+    from swegemma.cli import _build_cli_model_registry
 
 HARNESS_TOOLS = ["run_command", "submit_patch", "get_status", "read_file", "edit_file", "write_file",
                  "get_code_neighbors", "search_similar_code", "get_code_subgraph"]
@@ -47,10 +52,14 @@ def main(argv: list[str]) -> int:
         return 2
     tools = {name: _stub(name) for name in HARNESS_TOOLS}
     # Unreachable endpoint on purpose: compilation must not call the model.
-    models = setup_gemma_model_registry(api_base="http://127.0.0.1:9/v1", api_key="unused")
     failed = 0
     for sub in argv:
         try:
+            if setup_gemma_model_registry is not None:
+                models = setup_gemma_model_registry(api_base="http://127.0.0.1:9/v1", api_key="unused")
+            else:
+                os.environ["LOCAL_INFERENCE_URL"] = "http://127.0.0.1:9/v1"
+                models = _build_cli_model_registry(submission_dir=Path(sub))
             agent = compile_submission(submission_dir=Path(sub), tool_registry=tools, model_registry=models)
         except Exception as exc:  # noqa: BLE001 - report every compiler error type the same way
             failed += 1
