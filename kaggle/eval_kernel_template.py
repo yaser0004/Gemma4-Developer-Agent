@@ -208,7 +208,7 @@ def main() -> None:
         rows = [{"id": r.instance_id, "resolved": bool(r.resolved), "tool_calls": r.tool_calls,
                  "patch_chars": len(r.agent_patch or ""), "exit": r.test_exit_code,
                  "seconds": round(getattr(r, "duration_seconds", 0) or 0, 1),
-                 "error": (getattr(r, "error_message", None) or "")[:300]} for r in result.task_results]
+                 "error": (getattr(r, "error", None) or "")[:300]} for r in result.task_results]
         summary[variant.name] = {"resolved": sum(r["resolved"] for r in rows), "total": len(rows),
                                  "wall_seconds": round(time.time() - t_arm), "tasks": rows}
         (WORK / "summary_all.json").write_text(json.dumps(summary, indent=2))
