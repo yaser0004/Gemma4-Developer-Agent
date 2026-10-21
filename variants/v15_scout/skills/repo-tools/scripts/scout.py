@@ -47,6 +47,9 @@ FILLER = STOPWORDS | {
     "wrong", "missing", "always", "never", "already", "type", "tests", "test", "manually",
     "tested", "accept", "review", "pedantic", "args", "black", "changelog", "contributors",
 }
+# Module names too generic for "the term names this module" to mean anything.
+GENERIC_STEMS = {"util", "utils", "base", "core", "main", "json", "init", "types", "common", "helper",
+                 "helpers", "compat", "models", "model", "misc", "tools", "config", "constants"}
 NON_CODE_EXT = {"md", "rst", "txt", "com", "org", "io", "net", "dev", "html", "htm", "yml", "yaml",
                 "toml", "cfg", "ini", "json", "c", "h", "js", "css", "png", "svg", "lock"}
 
@@ -67,7 +70,8 @@ SCOPE = "--untracked" if os.path.isdir(os.path.join(ROOT, ".git")) else "--no-in
 
 def grep(*args: str) -> list[str]:
     try:
-        res = subprocess.run(["git", "grep", "-n", "-I", SCOPE, *args, "--", "*.py"],
+        # Exclude the skill runner's temp file: it embeds this script and its arguments.
+        res = subprocess.run(["git", "grep", "-n", "-I", SCOPE, *args, "--", "*.py", ":(exclude).adk_exec_*"],
                              cwd=ROOT, capture_output=True, text=True, check=False, timeout=20)
     except (OSError, subprocess.TimeoutExpired):
         return []
@@ -147,7 +151,7 @@ def rank(terms: list[str], words: list[str] = ()):
             defs = [n for n, is_def in found if is_def]
             score = weight * (4.0 if defs else 1.0 + 0.25 * min(len(found) - 1, 4))
             stem = PurePosixPath(path).stem.lower().lstrip("_")
-            if stem and key.lower().rstrip("s") in (stem, stem.rstrip("s")):
+            if stem not in GENERIC_STEMS and len(stem) >= 4 and key.lower().rstrip("s") in (stem, stem.rstrip("s")):
                 score += 3.0 * weight  # the term names the module itself (markdown -> markdown.py)
             if TEST_PATH.search(path):
                 score *= 0.3

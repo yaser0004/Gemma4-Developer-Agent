@@ -64,6 +64,12 @@ def test_scout_extracts_terms_from_free_text_and_error_messages(repo):
     assert "pkg/render.py" in out
 
 
+def test_scout_ignores_the_skill_runner_temp_file(repo):
+    (repo / ".adk_exec_1a2b3c4d.py").write_text("sys.argv = ['scripts/scout.py', 'render_table']\n")
+    out = run("scout.py", repo, "render_table")
+    assert ".adk_exec_" not in out
+
+
 def test_scout_fails_soft(repo):
     assert "Usage" in run("scout.py", repo)
     assert "No searchable names" in run("scout.py", repo, "the a it")
