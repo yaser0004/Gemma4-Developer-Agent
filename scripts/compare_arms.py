@@ -4,13 +4,25 @@ Usage: python scripts/compare_arms.py <baseline_dir> <other_dir> [<other_dir> ..
 
 Prints per variant: resolved, how many ended by an error/time cap, the duration distribution, and the
 projected scorer wall time (sequential, N_SCORER tasks drawn like the local sample, divided by the
-concurrency slowdown given via --slowdown). Against the baseline it prints the paired win/loss table.
+concurrency slowdown given via --slowdown). Against the baseline it prints the paired win/loss table,
+overall and per repo.
+
+With --tasks (the competition tasks.jsonl) it also prints a failure taxonomy per variant, read from the
+saved patches and traces:
+- buckets: resolved / no_patch / gold_file (patch touches a file the gold patch touches, tests still fail)
+  / wrong_file, crossed with the task label from --labels (task_specificity.jsonl) when given;
+- thought volume per LLM call (the "(N chars)" counts in logs/*.log), the dominant wall-time cost;
+- compactions: prompt-token drops of more than 20% between consecutive LLM calls in a trace;
+- the tool-call index of the first source edit (edit_file/write_file).
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import json
+import re
+from collections import Counter
 import statistics
 from pathlib import Path
 
@@ -38,22 +50,116 @@ def describe(name: str, rows: dict[str, dict], n_scorer: int, slowdown: float, s
           f"sec p50 {pct(.5):.0f} p90 {pct(.9):.0f}  projected scorer {projected_h:.1f} h")
 
 
+def _literal(value):
+    # Trace fields are stored as Python reprs of dicts/lists (ATIF export), not JSON.
+    if isinstance(value, str):
+        try:
+            return ast.literal_eval(value)
+        except (ValueError, SyntaxError):
+            return None
+    return value
+
+
+def patched_files(patch: str) -> set[str]:
+    return set(re.findall(r"^--- a/(\S+)", patch, re.M))
+
+
+def trace_stats(trace: dict) -> tuple[int, int | None]:
+    """Return (compactions, tool-call index of the first edit) for one trace."""
+    compactions, first_edit, calls, prev_prompt = 0, None, 0, None
+    for step in trace.get("steps", []):
+        metrics = _literal(step.get("metrics"))
+        if metrics:
+            prompt = metrics.get("prompt_tokens", 0)
+            if prev_prompt and prompt < 0.8 * prev_prompt:
+                compactions += 1
+            prev_prompt = prompt
+        for call in _literal(step.get("tool_calls")) or []:
+            calls += 1
+            if first_edit is None and call.get("function_name") in ("edit_file", "write_file"):
+                first_edit = calls
+    return compactions, first_edit
+
+
+def diagnose(name: str, run_dir: Path, rows: dict[str, dict], gold: dict[str, set[str]],
+             labels: dict[str, str]) -> None:
+    buckets: Counter = Counter()
+    compactions, first_edits = 0, []
+    for iid, row in rows.items():
+        patch_path = run_dir / "patches" / f"{iid}.patch"
+        patch = patch_path.read_text(errors="replace") if patch_path.exists() else ""
+        if row["resolved"]:
+            bucket = "resolved"
+        elif not patch.strip():
+            bucket = "no_patch"
+        elif patched_files(patch) & gold.get(iid, set()):
+            bucket = "gold_file"
+        else:
+            bucket = "wrong_file"
+        buckets[(bucket, labels.get(iid, "-"))] += 1
+        trace_path = run_dir / "traces" / f"trace_{iid}.json"
+        if trace_path.exists():
+            c, fe = trace_stats(json.loads(trace_path.read_text()))
+            compactions += c
+            if fe is not None:
+                first_edits.append(fe)
+    thoughts = sorted(int(n) for log in (run_dir / "logs").glob("*.log")
+                      for n in re.findall(r"\((\d+) chars\)", log.read_text(errors="replace")))
+    by_bucket = Counter()
+    for (bucket, _), n in buckets.items():
+        by_bucket[bucket] += n
+    print(f"  {name}: buckets {dict(by_bucket)}")
+    if labels:
+        print("    by label: " + ", ".join(f"{b}/{lab} {n}" for (b, lab), n in sorted(buckets.items())))
+    if thoughts:
+        q = lambda f: thoughts[min(len(thoughts) - 1, int(f * len(thoughts)))]  # noqa: E731
+        print(f"    thought chars/call p50 {q(.5)} p90 {q(.9)} p99 {q(.99)} total {sum(thoughts)}")
+    edit_p50 = statistics.median(first_edits) if first_edits else "-"
+    print(f"    compactions {compactions}  first edit call p50 {edit_p50} "
+          f"(edited {len(first_edits)}/{len(rows)})")
+
+
+def paired(name: str, rows: dict[str, dict], base_name: str, base: dict[str, dict]) -> None:
+    shared = sorted(set(base) & set(rows))
+    wins = [i for i in shared if rows[i]["resolved"] and not base[i]["resolved"]]
+    losses = [i for i in shared if base[i]["resolved"] and not rows[i]["resolved"]]
+    per_repo = Counter()
+    for i in wins:
+        per_repo[rows[i]["repo"]] += 1
+    for i in losses:
+        per_repo[rows[i]["repo"]] -= 1
+    repos = ", ".join(f"{repo} {n:+d}" for repo, n in sorted(per_repo.items()))
+    print(f"{name} vs {base_name}: +{len(wins)} -{len(losses)} net {len(wins) - len(losses):+d} "
+          f"on {len(shared)} shared tasks ({repos or 'no change'})")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dirs", nargs="+", type=Path)
     parser.add_argument("--n-scorer", type=int, default=120)
     parser.add_argument("--slowdown", type=float, default=1.0, help="concurrency slowdown factor (calibration)")
     parser.add_argument("--setup-verify-s", type=float, default=40.0, help="per-task setup + verification seconds")
+    parser.add_argument("--tasks", type=Path, help="tasks.jsonl with gold patches; enables the taxonomy")
+    parser.add_argument("--labels", type=Path, help="task_specificity.jsonl (instance_id -> label)")
     args = parser.parse_args()
     runs = {d.name: load(d) for d in args.dirs}
     for name, rows in runs.items():
         describe(name, rows, args.n_scorer, args.slowdown, args.setup_verify_s)
     base_name, base = next(iter(runs.items()))
     for name, rows in list(runs.items())[1:]:
-        shared = sorted(set(base) & set(rows))
-        wins = [i for i in shared if rows[i]["resolved"] and not base[i]["resolved"]]
-        losses = [i for i in shared if base[i]["resolved"] and not rows[i]["resolved"]]
-        print(f"{name} vs {base_name}: +{len(wins)} -{len(losses)} net {len(wins) - len(losses):+d} on {len(shared)} shared tasks")
+        paired(name, rows, base_name, base)
+    if args.tasks:
+        tasks = [json.loads(line) for line in args.tasks.read_text().splitlines() if line.strip()]
+        gold = {t["instance_id"]: patched_files(t["patch"]) for t in tasks}
+        labels = {}
+        if args.labels:
+            for line in args.labels.read_text().splitlines():
+                if line.strip():
+                    row = json.loads(line)
+                    labels[row["instance_id"]] = row["label"]
+        print("taxonomy:")
+        for d in args.dirs:
+            diagnose(d.name, d, runs[d.name], gold, labels)
 
 
 if __name__ == "__main__":

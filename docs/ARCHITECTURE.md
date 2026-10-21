@@ -66,6 +66,10 @@ harness/run.py: for each task
   before they are used in the pytest command line.
 - **Secrets.** The Gemini API key is read from `GOOGLE_API_KEY` and is never
   written to results or logs.
+- **Skill scripts** (`variants/*/skills/repo-tools/scripts/`) run inside the task sandbox with the
+  agent's privileges, and their arguments are model output derived from untrusted issue text. They
+  pass arguments to `git` as argv lists (never a shell), cap their own output, and `check.py` is
+  read-only (it never touches the tree or the git index).
 
 ## Known divergences from the official harness
 
@@ -79,7 +83,7 @@ harness/run.py: for each task
 | Instruction section 5 of the prompt | Unpublished wording | Paraphrase of the README summary | Small. |
 | Tool descriptions | Unpublished | Our docstrings | The model sees different tool docs than in scoring. |
 | Patch apply pass 2 (symlink-normalized) | Present | Omitted | Only matters for symlinked package directories. |
-| Skills, LoRA adapters | Supported (LoRA reportedly fails to start on the pinned vLLM 0.19.1) | Not supported by the replica | Use the official harness for skills; avoid adapters until the vLLM issue is resolved. |
+| Skills, LoRA adapters | Supported (LoRA reportedly fails to start on the pinned vLLM 0.19.1) | Not supported by the replica | Use the official harness (Kaggle eval kernel) for skills; `tests/test_scout.py` runs the skill scripts the way the skill runner does. Avoid adapters until the vLLM issue is resolved. |
 | Timing | vLLM on 4x L4 | About 30 s per call through the free API | Local wall time is not meaningful. Compare tool calls, LLM calls and token counts instead. |
 
 ## Facts about the evaluation found so far
@@ -91,6 +95,23 @@ harness/run.py: for each task
 - Skill names must be lowercase kebab-case; skill paths resolve from the submission root
   and may not contain `..` (even though `!include` allows in-root `..`).
 - The uploaded file must be named `submission.zip`.
+- **How skill scripts run** (google-adk 1.36 `SkillToolset`, adk_eval_core `AdkSandboxCodeExecutor`):
+  each `run_skill_script` call inlines the whole skill directory into a temporary
+  `.adk_exec_<hex>.py` in the workspace, runs it with `python3` from a shell whose cwd is the workspace,
+  extracts the skill into a temp dir, `chdir`s there and `runpy`s the script. Consequences:
+  - Scripts must find the repository through `$PWD`, not a literal `/workspace`. The Kaggle scorer uses
+    the subprocess sandbox, which rewrites `/workspace` only inside command strings, so a hard-coded
+    path in a script searches nothing (the v3 `repo-tools` scripts had this bug).
+  - The temp file is visible to `git status` while the script runs.
+  - Each call counts as one tool call (`check_budget` defaults to counting), and keep the skill
+    directory small because it is resent on every call.
+- Snapshots carry the repository's git history up to the task's base (the newest commit predates the
+  PR), so `git log`/`git blame` are legitimate context and leak nothing.
+- **Where task time goes** (traces of arm races 1-3): per LLM call, latency is about
+  1.67 s + completion_tokens / 35.8 s at concurrency 1; tool execution is under 5% of task time.
+  Thinking text is about 62% of completion tokens and sits in a long tail (p90 about 1,800 chars per
+  call). `thinking_budget` is enforced (vLLM `thinking_token_budget` with the gemma4 reasoning parser).
+  Compaction (above) fired in 53 of 71 v12 tasks.
 
 - The published code graphs contain only `calls` edges, although the README mentions `DEFINED_IN` and `IMPORTS`.
 - Compaction in the scorer uses `token_threshold=14336` (HARNESS_README since 2026-09-25, Getting Started notebook). Compaction summarizes old events, so exact code strings needed later by `edit_file` can be lost; keep tool output short.
@@ -121,8 +142,10 @@ Checked by diffing the installed wheels (`.venv-official` is 0.2.7, `.venv-offic
 `kaggle/census_kernel` (CPU) verifies gold and empty patches for all public tasks with the Kaggle-side verifier and
 writes `eval_main.txt` (tasks where gold resolves and empty fails). `kaggle/build_eval_kernel.py` builds the GPU kernel
 (4x L4, vLLM, `Evaluator.run` with concurrency) that runs variants on those tasks with their own `eval_config.yaml`.
-`scripts/compare_arms.py` reads the result directories and prints resolved counts, paired wins and losses and the
-projected scorer wall time. Daily Kaggle GPU quota resets Saturdays at 00:00 UTC.
+`scripts/compare_arms.py` reads the result directories and prints resolved counts, paired wins and losses (overall
+and per repo) and the projected scorer wall time; with `--tasks` it adds a failure taxonomy (no patch / gold file
+touched but tests fail / wrong file), thought volume, compactions and the first-edit call index.
+`scripts/bench_scout.py` measures the scout skill offline (gold-file recall from the problem statement, no LLM). Daily Kaggle GPU quota resets Saturdays at 00:00 UTC.
 
 ## Operating notes
 
