@@ -70,6 +70,15 @@ harness/run.py: for each task
   agent's privileges, and their arguments are model output derived from untrusted issue text. They
   pass arguments to `git` as argv lists (never a shell), cap their own output, and `check.py` is
   read-only (it never touches the tree or the git index).
+- **Model tool calls are untrusted input to the scorer's vLLM server.** vLLM 0.19.1's gemma4 tool
+  parser (`_parse_gemma4_array`) loops forever when an array argument holds a bare (non-`<|"|>`)
+  element that stops at `]`, e.g. `["list[str]"]`. The loop runs on the server's event loop, so every
+  later task of the scoring run gets no model response and the run can exceed 12 h (no score). The
+  object/dict path always advances. Hence submissions never offer an array-typed argument:
+  `validate_submission.py` rejects `get_code_subgraph` and any instruction or skill doc that shows
+  list-form `run_skill_script` args (`args=[...]`, `positional_args`); skills take
+  `args={"key": "value"}`, which ADK passes as `--key value`. `compare_arms.py` fails a run's safety
+  gate on any list-form skill call or any gap over 400 s between steps.
 
 ## Known divergences from the official harness
 
@@ -145,6 +154,12 @@ writes `eval_main.txt` (tasks where gold resolves and empty fails). `kaggle/buil
 `scripts/compare_arms.py` reads the result directories and prints resolved counts, paired wins and losses (overall
 and per repo) and the projected scorer wall time; with `--tasks` it adds a failure taxonomy (no patch / gold file
 touched but tests fail / wrong file), thought volume, compactions and the first-edit call index.
+`--caps` replays each run at shorter time caps and projects scorer hours twice: expected (all tasks) and worst case
+(only tasks whose statement is not short, i.e. a hidden set where the prompt's short-issue triage never fires).
+A config may go to the leaderboard only if expected <= 11.3 h and worst case <= 12.0 h with `--slowdown 1.37
+--setup-verify-s 70` (lb-v6 passed at 12.2 h by this formula, lb-v7 overran at 12.7 h, and an overrun gets no score).
+Race kernels may run a variant at a looser cap than it ships with (v16_triage's `eval_config.yaml` says so); the
+shipping cap comes from this replay. `short_statement` in `compare_arms.py` is the same rule the v16 prompt states.
 `scripts/bench_scout.py` measures the scout skill offline (gold-file recall from the problem statement, no LLM). Daily Kaggle GPU quota resets Saturdays at 00:00 UTC.
 
 ## Operating notes
