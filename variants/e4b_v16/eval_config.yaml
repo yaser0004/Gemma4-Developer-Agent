@@ -1,0 +1,6 @@
+# Race-only loose cap (race 4): the shipping cap is derived by compare_arms.py --worst-case-short and must project <= 11.3 h expected, <= 12.0 h worst case.
+evaluation:
+  timeout_seconds: 240
+  max_tool_calls: 40
+  max_time_minutes: 10
+  max_turns: 80
