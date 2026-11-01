@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "variants" / "v15_scout" / "skills" / "repo-tools" / "scripts"
+SCRIPTS = Path(__file__).resolve().parents[1] / "variants" / "v15s_scout" / "skills" / "repo-tools" / "scripts"
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
 
@@ -104,3 +104,10 @@ def test_check_ok_for_a_clean_source_edit(repo):
     (repo / "pkg" / "util.py").write_text("def helper():\n    return 2\n")
     (repo / ".adk_exec_1a2b3c4d.py").write_text("# skill runner temp file\n")
     assert "OK: only source files changed" in run("check.py", repo)
+
+
+def test_scout_accepts_object_form_args(repo):
+    # run_skill_script(args={"terms": ...}) reaches the script as `--terms <value>`.
+    out = run("scout.py", repo, "--terms", "Renderer.render_table list[str] 'table must have rows'")
+    assert "pkg/render.py" in out.split("Best source files", 1)[1].splitlines()[1]
+    assert "--terms" not in out

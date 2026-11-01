@@ -9,7 +9,7 @@ Reports gold-file recall@1/@3/@5 among scout's ranked source files, output size 
 repo and per specificity label. A task counts only if its gold patch changes a non-test .py file.
 
 Usage: python scripts/bench_scout.py --data ../RESOURCES/competition_data --work ../ai/scratch/bench_scout
-           [--labels ../ai/analysis/task_specificity.jsonl] [--scout variants/v15_scout/...] [--only ID ...]
+           [--labels ../ai/analysis/task_specificity.jsonl] [--scout variants/v15s_scout/...] [--only ID ...]
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-DEFAULT_SCOUT = REPO / "variants" / "v15_scout" / "skills" / "repo-tools" / "scripts" / "scout.py"
+DEFAULT_SCOUT = REPO / "variants" / "v15s_scout" / "skills" / "repo-tools" / "scripts" / "scout.py"
 TEST_PATH = re.compile(r"(^|/)(tests?/|testing/|test_[^/]*\.py$|[^/]*_test\.py$|conftest\.py$)")
 
 

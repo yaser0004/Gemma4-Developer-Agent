@@ -62,14 +62,15 @@ def test_include_parent_within_root_allowed(tmp_path):
     assert validate(make(tmp_path, files)) == []
 
 
-def test_official_sample_submission_only_fails_on_thinking_level():
+def test_official_sample_submission_only_fails_on_scorer_hazards():
     # The sample is structurally valid, but its thinking_level makes every model call
-    # fail in the scorer (reasoning_effort rejected by LiteLLM).
+    # fail in the scorer (reasoning_effort rejected by LiteLLM), and it offers the
+    # array-argument graph tool that can hang the scorer's tool parser.
     sample = REPO.parent / "RESOURCES" / "competition_data" / "sample_submission"
     if not sample.is_dir():
         pytest.skip("competition data not downloaded")
     errors = validate(sample)
-    assert errors and all("reasoning_effort" in e for e in errors)
+    assert errors and all("reasoning_effort" in e or "array argument" in e for e in errors)
 
 
 def test_include_absolute_rejected(tmp_path):
@@ -216,3 +217,37 @@ def test_explicit_thinking_off_and_on_accepted(tmp_path):
         files = minimal()
         files["agent.yaml"] = f"name: a\nmodel: {MODEL}\ngenerate_content_config:\n  {gen}\n"
         assert validate(make(tmp_path / str(abs(hash(gen))), files)) == []
+
+
+def test_array_argument_tool_rejected(tmp_path):
+    files = minimal()
+    files["agent.yaml"] = f"name: a\nmodel: {MODEL}\ntools: [run_command, get_code_subgraph]\n"
+    assert any("array argument" in e for e in validate(make(tmp_path, files)))
+
+
+@pytest.mark.parametrize(
+    "doc, ok",
+    [
+        ('Run `run_skill_script(skill_name="t", file_path="scripts/s.py", args={"terms": "a b"})`.', True),
+        ('Run `run_skill_script(skill_name="t", file_path="scripts/s.py", args=["a", "b"])`.', False),
+        ("Pass the terms as positional_args.", False),
+    ],
+)
+def test_list_form_skill_args_rejected_in_skill_docs(tmp_path, doc, ok):
+    files = minimal(**{"skills/t/SKILL.md": f"---\nname: t\n---\n{doc}\n"})
+    files["agent.yaml"] += "skills: [skills/t]\n"
+    errors = validate(make(tmp_path, files))
+    assert (not any("list-form" in e for e in errors)) == ok, errors
+
+
+def test_list_form_skill_args_rejected_in_prompt(tmp_path):
+    files = minimal(**{"prompts/s.md": "Call run_skill_script with args: [the terms]."})
+    assert any("list-form" in e for e in validate(make(tmp_path, files)))
+
+
+def test_missing_time_cap_warns_but_passes(tmp_path, capsys):
+    assert main([str(make(tmp_path, minimal()))]) == 0
+    assert "max_time_minutes" in capsys.readouterr().err
+    files = minimal(**{"eval_config.yaml": "evaluation:\n  max_time_minutes: 6\n"})
+    assert main([str(make(tmp_path / "capped", files))]) == 0
+    assert "max_time_minutes" not in capsys.readouterr().err

@@ -34,6 +34,14 @@ HARNESS_TOOLS = {
     "run_command", "submit_patch", "get_status", "read_file", "edit_file",
     "write_file", "get_code_neighbors", "search_similar_code", "get_code_subgraph",
 }
+# vLLM 0.19.1's gemma4 tool parser loops forever on an array argument whose bare
+# element contains `]` (e.g. `["list[str]"]`). The loop runs on the server's event
+# loop, so one such call stalls every later task of the scoring run. Array-typed
+# arguments must therefore never be offered to the model.
+ARRAY_ARG_TOOLS = {"get_code_subgraph"}
+# run_skill_script accepts `args` as an object or a list; instructions must only
+# demonstrate the object form, and never `positional_args` (always a list).
+LIST_FORM_SKILL_ARGS = re.compile(r"\bargs\s*[=:]\s*\[|\bpositional_args\b")
 AGENT_CLASSES = {"LlmAgent", "SequentialAgent", "ParallelAgent", "LoopAgent"}
 FORBIDDEN_GEN_FIELDS = {"tools", "system_instruction", "http_options", "safety_settings", "response_schema"}
 THINKING_LEVELS = {"MINIMAL", "LOW", "MEDIUM", "HIGH", "NONE"}
@@ -205,6 +213,10 @@ def _check_skill(root: Path, rel: Any, where: str, errors: list[str]) -> None:
         errors.append(f"{where}: skill {rel!r} has no SKILL.md")
         return
     text = manifest.read_text(encoding="utf-8")
+    for doc in sorted(sdir.rglob("*.md")):
+        if LIST_FORM_SKILL_ARGS.search(doc.read_text(encoding="utf-8", errors="replace")):
+            errors.append(f"{where}: {rel}/{doc.relative_to(sdir).as_posix()} shows list-form skill args; "
+                          "use the object form args={...} (list args can hang the scorer's tool parser)")
     front = text.split("---", 2)[1] if text.startswith("---") and text.count("---") >= 2 else ""
     try:
         meta = yaml.safe_load(front) or {}
@@ -288,6 +300,9 @@ class _Walker:
                     self.errors.append(f"{where}: {key} longer than {MAX_INSTRUCTION_CHARS} chars")
                 elif text and key != "description":
                     self.instruction_chars += len(text)
+                    if LIST_FORM_SKILL_ARGS.search(text):
+                        self.errors.append(f"{where}: {key} shows list-form skill args; use the object form "
+                                           "(list args can hang the scorer's tool parser)")
                     for name in STATE_PLACEHOLDER.findall(text):
                         self.placeholders.append((where, name.strip()))
             if isinstance(config.get("output_key"), str):
@@ -299,6 +314,9 @@ class _Walker:
                 if isinstance(tool, str):
                     if tool not in HARNESS_TOOLS:
                         self.errors.append(f"{where}: tool {tool!r} is not a harness tool")
+                    elif tool in ARRAY_ARG_TOOLS:
+                        self.errors.append(f"{where}: tool {tool!r} takes an array argument, which can hang "
+                                           "the scorer's tool parser for the rest of the run")
                 elif isinstance(tool, dict) and "agent_tool" in tool:
                     self.walk_ref(tool["agent_tool"], base_dir, where, depth + 1)
                 elif isinstance(tool, dict):
@@ -346,6 +364,16 @@ def validate(submission: Path) -> list[str]:
     return errors
 
 
+def _eval_limits(submission: Path) -> dict:
+    path = submission / "eval_config.yaml"
+    try:
+        config = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else None
+    except yaml.YAMLError:
+        return {}
+    evaluation = config.get("evaluation") if isinstance(config, dict) else None
+    return evaluation if isinstance(evaluation, dict) else {}
+
+
 def write_zip(submission: Path, out: Path) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     files = sorted(p for p in submission.rglob("*") if p.is_file() and not p.is_symlink())
@@ -367,6 +395,9 @@ def main(argv: list[str] | None = None) -> int:
     if errors:
         return 1
     print(f"OK: {args.submission}")
+    if "max_time_minutes" not in _eval_limits(args.submission):
+        print("WARNING: eval_config.yaml sets no max_time_minutes; the 12 h limit is all-or-nothing",
+              file=sys.stderr)
     if args.zip:
         n = write_zip(args.submission, args.zip)
         print(f"wrote {args.zip} ({n} files, {args.zip.stat().st_size} bytes)")

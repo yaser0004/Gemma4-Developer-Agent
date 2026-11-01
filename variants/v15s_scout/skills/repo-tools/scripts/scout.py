@@ -210,7 +210,9 @@ def related_tests(path: str, terms: list[str]) -> list[str]:
 
 
 def main() -> int:
-    raw = [a for a in sys.argv[1:] if a.strip()]
+    # run_skill_script passes object-form args as `--key value`; the option names
+    # carry no meaning here, only their values do.
+    raw = [a for a in sys.argv[1:] if a.strip() and not re.fullmatch(r"--[\w-]+", a)]
     if not raw:
         print(__doc__)
         return 0

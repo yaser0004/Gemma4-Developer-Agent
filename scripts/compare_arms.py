@@ -13,7 +13,15 @@ saved patches and traces:
   / wrong_file, crossed with the task label from --labels (task_specificity.jsonl) when given;
 - thought volume per LLM call (the "(N chars)" counts in logs/*.log), the dominant wall-time cost;
 - compactions: prompt-token drops of more than 20% between consecutive LLM calls in a trace;
-- the tool-call index of the first source edit (edit_file/write_file).
+- the tool-call index of the first source edit (edit_file/write_file);
+- safety counters: tool calls the parser mangled ("mandatory input parameters are not present"),
+  identical consecutive retries, run_skill_script calls with list-form args (these can hang the
+  scorer's vLLM tool parser for the rest of a run), and stalls (gaps over 400 s between steps);
+- triage compliance: short-statement tasks (see short_statement) that ended within 8 tool calls.
+
+--caps 450,540,600 replays each run at shorter time caps (seconds of run time; a run counts as
+resolved only if it finished within the cap) and projects scorer hours twice: expected (all tasks)
+and worst case (only tasks with a non-short statement, i.e. a hidden set where triage never fires).
 """
 
 from __future__ import annotations
@@ -25,6 +33,19 @@ import re
 from collections import Counter
 import statistics
 from pathlib import Path
+
+
+STALL_GAP_S = 400  # must exceed timeout_seconds: a legitimate run_command can take 240-300 s
+TRIAGE_MAX_CALLS = 8
+_SHORT_NOISE = (re.compile(r"<!--.*?-->", re.S), re.compile(r"https?://\S+"),
+                re.compile(r"(?im)^\s*[-*]?\s*(fixes|closes|resolves)\b.*$"))
+
+
+def short_statement(text: str, limit: int = 80) -> bool:
+    """The prompt's triage rule: almost nothing left once links, HTML comments and Fixes lines go."""
+    for pattern in _SHORT_NOISE:
+        text = pattern.sub("", text)
+    return len(text.strip()) < limit
 
 
 def load(run_dir: Path) -> dict[str, dict]:
@@ -81,9 +102,45 @@ def trace_stats(trace: dict) -> tuple[int, int | None]:
     return compactions, first_edit
 
 
+def safety_stats(trace: dict) -> Counter:
+    """Count parser-mangled calls, identical retries, list-form skill args and stalls in one trace."""
+    stats: Counter = Counter()
+    prev_call, prev_elapsed = None, None
+    for step in trace.get("steps", []):
+        if "mandatory input parameters are not present" in str(step.get("observation", "")):
+            stats["rejected"] += 1
+        extra = _literal(step.get("extra")) or {}
+        elapsed = extra.get("elapsed_s") if isinstance(extra, dict) else None
+        if isinstance(elapsed, (int, float)):
+            if prev_elapsed is not None and elapsed - prev_elapsed > STALL_GAP_S:
+                stats["stalls"] += 1
+            prev_elapsed = elapsed
+        for call in _literal(step.get("tool_calls")) or []:
+            args = call.get("arguments") or {}
+            key = (call.get("function_name"), repr(args))
+            if key == prev_call:
+                stats["identical_retries"] += 1
+            prev_call = key
+            if call.get("function_name") == "run_skill_script" and isinstance(args, dict) and (
+                    isinstance(args.get("args"), list) or args.get("positional_args")):
+                stats["list_skill_args"] += 1
+    return stats
+
+
+def project(rows: dict[str, dict], cap: float, slowdown: float, setup_verify_s: float,
+            n_scorer: int) -> tuple[int, float]:
+    """Resolved within `cap` run-seconds and projected scorer hours if every run stopped there."""
+    if not rows:
+        return 0, 0.0
+    resolved = sum(1 for r in rows.values() if r["resolved"] and r["duration_seconds"] <= cap)
+    mean_s = statistics.mean(min(r["duration_seconds"], cap) for r in rows.values()) / slowdown
+    return resolved, n_scorer * (mean_s + setup_verify_s) / 3600
+
+
 def diagnose(name: str, run_dir: Path, rows: dict[str, dict], gold: dict[str, set[str]],
-             labels: dict[str, str]) -> None:
+             labels: dict[str, str], short_ids: set[str]) -> None:
     buckets: Counter = Counter()
+    safety: Counter = Counter()
     compactions, first_edits = 0, []
     for iid, row in rows.items():
         patch_path = run_dir / "patches" / f"{iid}.patch"
@@ -99,7 +156,9 @@ def diagnose(name: str, run_dir: Path, rows: dict[str, dict], gold: dict[str, se
         buckets[(bucket, labels.get(iid, "-"))] += 1
         trace_path = run_dir / "traces" / f"trace_{iid}.json"
         if trace_path.exists():
-            c, fe = trace_stats(json.loads(trace_path.read_text()))
+            trace = json.loads(trace_path.read_text())
+            safety += safety_stats(trace)
+            c, fe = trace_stats(trace)
             compactions += c
             if fe is not None:
                 first_edits.append(fe)
@@ -117,6 +176,15 @@ def diagnose(name: str, run_dir: Path, rows: dict[str, dict], gold: dict[str, se
     edit_p50 = statistics.median(first_edits) if first_edits else "-"
     print(f"    compactions {compactions}  first edit call p50 {edit_p50} "
           f"(edited {len(first_edits)}/{len(rows)})")
+    short = [rows[i] for i in rows if i in short_ids]
+    if short:
+        fast = sum(1 for r in short if r["tool_calls"] <= TRIAGE_MAX_CALLS)
+        print(f"    triage: {fast}/{len(short)} short-statement tasks ended within {TRIAGE_MAX_CALLS} calls, "
+              f"resolved {sum(r['resolved'] for r in short)}")
+    gate = "FAIL" if safety["list_skill_args"] or safety["stalls"] else "ok"
+    print(f"    safety {gate}: rejected calls {safety['rejected']}, identical retries "
+          f"{safety['identical_retries']}, list-form skill args {safety['list_skill_args']}, "
+          f"stalls >{STALL_GAP_S}s {safety['stalls']}")
 
 
 def paired(name: str, rows: dict[str, dict], base_name: str, base: dict[str, dict]) -> None:
@@ -141,6 +209,8 @@ def main() -> None:
     parser.add_argument("--setup-verify-s", type=float, default=40.0, help="per-task setup + verification seconds")
     parser.add_argument("--tasks", type=Path, help="tasks.jsonl with gold patches; enables the taxonomy")
     parser.add_argument("--labels", type=Path, help="task_specificity.jsonl (instance_id -> label)")
+    parser.add_argument("--caps", help="comma-separated run-time caps in seconds to replay (needs --tasks "
+                        "for the worst-case projection)")
     args = parser.parse_args()
     runs = {d.name: load(d) for d in args.dirs}
     for name, rows in runs.items():
@@ -148,8 +218,21 @@ def main() -> None:
     base_name, base = next(iter(runs.items()))
     for name, rows in list(runs.items())[1:]:
         paired(name, rows, base_name, base)
+    tasks = []
     if args.tasks:
         tasks = [json.loads(line) for line in args.tasks.read_text().splitlines() if line.strip()]
+    short_ids = {t["instance_id"] for t in tasks if short_statement(t.get("problem_statement", ""))}
+    if args.caps:
+        print("cap replay (resolved, expected h, worst-case h without short-statement tasks):")
+        for cap in (float(c) for c in args.caps.split(",")):
+            cells = []
+            for name, rows in runs.items():
+                resolved, hours = project(rows, cap, args.slowdown, args.setup_verify_s, args.n_scorer)
+                long_rows = {i: r for i, r in rows.items() if i not in short_ids}
+                _, worst = project(long_rows, cap, args.slowdown, args.setup_verify_s, args.n_scorer)
+                cells.append(f"{name} {resolved} {hours:.2f}h/{worst:.2f}h")
+            print(f"  {cap:5.0f}s  " + "  ".join(cells))
+    if args.tasks:
         gold = {t["instance_id"]: patched_files(t["patch"]) for t in tasks}
         labels = {}
         if args.labels:
@@ -159,7 +242,7 @@ def main() -> None:
                     labels[row["instance_id"]] = row["label"]
         print("taxonomy:")
         for d in args.dirs:
-            diagnose(d.name, d, runs[d.name], gold, labels)
+            diagnose(d.name, d, runs[d.name], gold, labels, short_ids)
 
 
 if __name__ == "__main__":

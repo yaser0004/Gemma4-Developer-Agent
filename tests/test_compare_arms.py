@@ -34,3 +34,40 @@ def test_patched_files_reads_both_diff_styles():
     assert patched_files(gold) == {"pkg/mod.py"}
     assert patched_files(agent) == {"x.py"}
     assert patched_files("") == set()
+
+
+def test_short_statement_ignores_links_comments_and_fixes_lines():
+    from compare_arms import short_statement
+    assert short_statement("Syntax padding\n\nFixes https://github.com/o/r/issues/3727")
+    assert short_statement("empty with end\n\n- Fixes https://x/1\n- Closes #2\n<!-- template\nlong text -->")
+    assert not short_statement("Calling `Table.add_row` with a `None` cell raises TypeError: "
+                               "'NoneType' object is not iterable; it should render an empty cell.")
+
+
+def test_safety_stats_counts_rejections_retries_list_args_and_stalls():
+    from compare_arms import safety_stats
+    skill = {"function_name": "run_skill_script", "arguments": {"skill_name": "t", "args": ["list[str]"]}}
+    edit = {"function_name": "edit_file", "arguments": {"filepath": "a.py"}}
+    trace = {"steps": [
+        {"tool_calls": repr([edit]), "extra": repr({"elapsed_s": 10.0}),
+         "observation": repr({"content": "mandatory input parameters are not present: old_string"})},
+        {"tool_calls": repr([edit]), "extra": repr({"elapsed_s": 20.0})},
+        {"tool_calls": repr([skill]), "extra": repr({"elapsed_s": 500.0})},
+        {"tool_calls": repr([{"function_name": "run_skill_script", "arguments": {"args": {"terms": "a"}}}]),
+         "extra": repr({"elapsed_s": 510.0})},
+    ]}
+    stats = safety_stats(trace)
+    assert stats["rejected"] == 1
+    assert stats["identical_retries"] == 1
+    assert stats["list_skill_args"] == 1
+    assert stats["stalls"] == 1
+
+
+def test_project_replays_a_shorter_cap():
+    from compare_arms import project
+    rows = {"a": {"resolved": True, "duration_seconds": 100.0},
+            "b": {"resolved": True, "duration_seconds": 500.0}}
+    resolved, hours = project(rows, cap=300, slowdown=1.0, setup_verify_s=0, n_scorer=36)
+    assert resolved == 1
+    assert abs(hours - 36 * 200 / 3600) < 1e-9
+    assert project({}, 300, 1.0, 0, 120) == (0, 0.0)
