@@ -214,8 +214,9 @@ def main() -> None:
         (WORK / "summary_all.json").write_text(json.dumps(summary, indent=2))
         log(f"arm {variant.name}: {summary[variant.name]['resolved']}/{len(rows)} in {summary[variant.name]['wall_seconds']}s")
     stop.set()
-    server.stop()
+    # server.stop() deletes its log file, so copy it first.
     shutil.copy(server.log_path, WORK / "vllm.log")
+    server.stop()
     shutil.rmtree(variants_root, ignore_errors=True)
 
 
