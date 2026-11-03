@@ -71,3 +71,23 @@ def test_project_replays_a_shorter_cap():
     assert resolved == 1
     assert abs(hours - 36 * 200 / 3600) < 1e-9
     assert project({}, 300, 1.0, 0, 120) == (0, 0.0)
+
+
+def test_export_writes_metrics_without_patches(tmp_path):
+    import csv
+    import json
+    from compare_arms import EXPORT_FIELDS, export
+    run = tmp_path / "arm"
+    (run / "traces").mkdir(parents=True)
+    (run / "traces" / "trace_t1.json").write_text(json.dumps({"steps": [
+        {"observation": "mandatory input parameters are not present"}]}))
+    rows = {"t1": {"repo": "r", "resolved": True, "duration_seconds": 12.5, "tool_calls": 3,
+                   "agent_patch": "diff --git a/secret.py"},
+            "t2": {"repo": "r", "resolved": False, "duration_seconds": 40.0, "tool_calls": 9}}
+    out = tmp_path / "m.csv"
+    export(out, [run], {"arm": rows}, short_ids={"t2"})
+    got = list(csv.DictReader(out.open()))
+    assert list(got[0]) == EXPORT_FIELDS
+    assert [(r["instance_id"], r["resolved"], r["short_statement"], r["rejected"]) for r in got] == [
+        ("t1", "1", "0", "1"), ("t2", "0", "1", "0")]
+    assert "diff --git" not in out.read_text()

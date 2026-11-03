@@ -22,12 +22,16 @@ saved patches and traces:
 --caps 450,540,600 replays each run at shorter time caps (seconds of run time; a run counts as
 resolved only if it finished within the cap) and projects scorer hours twice: expected (all tasks)
 and worst case (only tasks with a non-short statement, i.e. a hidden set where triage never fires).
+
+--export metrics.csv writes one row per (arm, task) with the per-task numbers behind these tables. It holds
+no patches and no task text, so it can be published with the paper.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import csv
 import json
 import re
 from collections import Counter
@@ -187,6 +191,25 @@ def diagnose(name: str, run_dir: Path, rows: dict[str, dict], gold: dict[str, se
           f"stalls >{STALL_GAP_S}s {safety['stalls']}")
 
 
+EXPORT_FIELDS = ["arm", "instance_id", "repo", "resolved", "duration_seconds", "tool_calls",
+                 "short_statement", "rejected", "identical_retries", "stalls"]
+
+
+def export(path: Path, dirs: list[Path], runs: dict[str, dict[str, dict]], short_ids: set[str]) -> None:
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=EXPORT_FIELDS)
+        writer.writeheader()
+        for d in dirs:
+            for iid, row in sorted(runs[d.name].items()):
+                trace_path = d / "traces" / f"trace_{iid}.json"
+                stats = safety_stats(json.loads(trace_path.read_text())) if trace_path.exists() else Counter()
+                writer.writerow({"arm": d.name, "instance_id": iid, "repo": row["repo"],
+                                 "resolved": int(bool(row["resolved"])),
+                                 "duration_seconds": row["duration_seconds"], "tool_calls": row["tool_calls"],
+                                 "short_statement": int(iid in short_ids), "rejected": stats["rejected"],
+                                 "identical_retries": stats["identical_retries"], "stalls": stats["stalls"]})
+
+
 def paired(name: str, rows: dict[str, dict], base_name: str, base: dict[str, dict]) -> None:
     shared = sorted(set(base) & set(rows))
     wins = [i for i in shared if rows[i]["resolved"] and not base[i]["resolved"]]
@@ -211,6 +234,7 @@ def main() -> None:
     parser.add_argument("--labels", type=Path, help="task_specificity.jsonl (instance_id -> label)")
     parser.add_argument("--caps", help="comma-separated run-time caps in seconds to replay (needs --tasks "
                         "for the worst-case projection)")
+    parser.add_argument("--export", type=Path, help="write per-task metrics (no patches) to this CSV")
     args = parser.parse_args()
     runs = {d.name: load(d) for d in args.dirs}
     for name, rows in runs.items():
@@ -243,6 +267,8 @@ def main() -> None:
         print("taxonomy:")
         for d in args.dirs:
             diagnose(d.name, d, runs[d.name], gold, labels, short_ids)
+    if args.export:
+        export(args.export, args.dirs, runs, short_ids)
 
 
 if __name__ == "__main__":
