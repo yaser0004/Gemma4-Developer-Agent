@@ -14,9 +14,9 @@ This repository contains two things:
 
 1. **The competition entry** (`submission/`): a declarative Google ADK agent config.
    The organizers compile and run it inside their `swegemma` harness.
-2. **A local replica of that harness** (`harness/`, `scripts/`). The official harness
-   is not public, and there is only one leaderboard submission per day, so we need
-   our own way to measure changes.
+2. **A local replica of that harness** (`harness/`, `scripts/`). It was built before
+   the official harness was released (see the update note above), and there is only
+   one leaderboard submission per day, so we need our own way to measure changes.
 
 Everything in the replica is derived from the organizers' `HARNESS_README.md`,
 `sandbox/setup.py`, `docker/Dockerfile.public`, and the competition rules pages.

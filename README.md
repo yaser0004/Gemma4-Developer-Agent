@@ -14,10 +14,15 @@ whose hidden tests pass after our patch is applied.
 | --- | --- |
 | `submission/` | The agent config that gets zipped and submitted. `agent.yaml` must stay at its root. |
 | `scripts/validate_submission.py` | Replica of the documented `adk-submission` checks; `--zip` also packages. |
+| `scripts/official_compile_check.py` | Compiles submissions with the organizers' own `adk_submission` compiler (needs the official wheelhouse in `.venv-official`). |
+| `scripts/compare_arms.py` | Compares eval-kernel result directories: resolved counts, paired wins/losses, failure taxonomy, projected scorer wall time (`--caps`), per-task CSV (`--export`). |
+| `scripts/bench_scout.py`, `scripts/make_repo_map.py` | Offline helpers: scout-skill gold-file recall, and a compact package map for prompts. |
 | `scripts/fetch_data.sh` | Downloads competition data (the snapshot subset listed in `splits/`). |
 | `splits/` | Dev task splits. `dev_a` (fastapi) is for tuning; `dev_b` (rich/requests/httpx) is held out to mimic unseen repos. |
 | `harness/` | Local replica of the official harness: Docker sandbox, the 9 tools, YAML-to-ADK compiler, agent runner, and Phase-2 verifier. See `docs/ARCHITECTURE.md`. |
 | `kaggle/build_eval_kernel.py` | Builds a private Kaggle kernel (NvidiaL4, internet off, organizers' wheelhouse) that serves the QAT model with the scorer's vLLM and runs the official Evaluator on chosen variants and tasks. Uses Kaggle GPU quota; never run it while a leaderboard submission is scoring. T4 machines cannot run Gemma 4 attention in vLLM 0.19.1. |
+| `kaggle/census_kernel/` | CPU kernel that checks gold and empty patches for all public tasks and writes `splits/eval_main.txt`. |
+| `variants/` | Experimental agent configs raced against each other on the eval kernel. The leaderboard config is copied into `submission/`. |
 | `docs/ARCHITECTURE.md` | Data flow, trust boundaries, and every known divergence from the official harness. |
 | `tests/` | Unit tests for our tooling (Docker tests are skipped when Docker is unavailable). |
 
