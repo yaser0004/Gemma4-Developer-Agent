@@ -46,6 +46,20 @@ The best score went from 0.03 to 0.15 (5x). The leaders score about 0.24, and mo
 public config. A paper on the method is planned for the competition's
 [paper track](https://www.kaggle.com/competitions/gemma-4-developer-agent-paper).
 
+## Key findings
+
+- **Finishing on time comes first.** A config that solved 5 more local tasks overran the 12-hour limit and
+  got no score. Since then, every candidate must pass a projected wall-time gate before it uses a submission.
+- **Thinking matters.** Turning off the model's reasoning roughly halved the solve rate. The gains came from
+  capping it with a budget instead.
+- **Agent output is untrusted input, even to the scorer.** One particular tool-call shape makes the scorer's vLLM
+  parser loop forever. The validator now rejects any config that could produce it.
+- **Leaderboard noise is large** (about ±0.1), so decisions rely on paired local comparisons, not single scores.
+
+## Tech stack
+
+Python, Google ADK, Gemma 4 (31B, 4-bit QAT), vLLM, Docker, Kaggle GPU kernels (4x L4), pytest.
+
 ## Learn more
 
 - [Development guide](docs/DEVELOPMENT.md): repository layout, setup, testing, and how to submit
